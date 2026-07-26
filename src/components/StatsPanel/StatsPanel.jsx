@@ -158,67 +158,12 @@ export const StatsPanel = () => {
     challenge3Completed,
     challengeFinalCompleted,
     suspectUsersCount,
-    escapeTimerStarted,
-    escapeTimerRemainingMs,
-    escapeTimerExpired,
-    escapeTimerFlashTick,
-    escapeTimerDurationMs,
   } = useStats();
   const { t } = useTranslation();
-  
-  // Local state for countdown flash effect when timer is critical
-  const [countdownFlash, setCountdownFlash] = useState(false);
-  
+
   // State to track the order of modules - reordered after completion animations
   // Modules with completion=false appear first (urgent), completed modules appear last
   const [moduleOrder, setModuleOrder] = useState([0, 1, 2]); // Indices for [module1, module2, module3]
-  
-  // Ref to track last flash tick seen (prevents duplicate flash animations)
-  const lastHandledFlashTickRef = useRef(escapeTimerFlashTick);
-  const isCountdownCritical = escapeTimerRemainingMs <= 5 * 60 * 1000;
-
-
-  /**
-   * Effect: Handle countdown flash animation
-   * 
-   * Triggers visual flash effect when timer reaches critical state.
-   * Flash duration varies based on urgency:
-   * - Critical (<5 min): 1700ms flash
-   * - Normal: 1300ms flash
-   */
-  useEffect(() => {
-    // Skip if timer not started or challenge already completed
-    if (!escapeTimerStarted || challengeFinalCompleted || !escapeTimerFlashTick) return;
-    
-    // Skip if this flash tick already processed (avoid duplicates)
-    if (escapeTimerFlashTick <= lastHandledFlashTickRef.current) return;
-    
-    // Mark this flash tick as processed
-    lastHandledFlashTickRef.current = escapeTimerFlashTick;
-    
-    // Trigger flash effect
-    setCountdownFlash(true);
-    
-    // Set duration based on urgency and clear effect after delay
-    const timeoutId = setTimeout(() => setCountdownFlash(false), isCountdownCritical ? 1700 : 1300);
-    
-    // Cleanup timeout on effect re-run
-    return () => clearTimeout(timeoutId);
-  }, [escapeTimerFlashTick, escapeTimerStarted, challengeFinalCompleted, isCountdownCritical]);
-
-
-  /**
-   * Format remaining time as MM:SS string
-   * Displays "00:00" when time is up or not started
-   */
-  const countdownText = (() => {
-    // Convert milliseconds to seconds, clamped to minimum 0
-    const totalSeconds = Math.max(0, Math.ceil(escapeTimerRemainingMs / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    // Format as MM:SS with leading zeros
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  })();
 
   /**
    * Animated values for challenge metrics
@@ -575,60 +520,8 @@ export const StatsPanel = () => {
   };
 
 
-  /**
-   * Calculate elapsed time when escape room is completed
-   * Formats as localized message: "Completed in X minutes and Y seconds"
-   */
-  let completionTimeText = null;
-  if (challengeFinalCompleted && escapeTimerStarted) {
-    // Calculate total elapsed time
-    const totalSeconds = Math.max(0, Math.floor((escapeTimerDurationMs - escapeTimerRemainingMs) / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    // Format with translation for localization
-    completionTimeText = t("statsPanel.completionTimeMsg", { minutes, seconds });
-  }
-
   return (
     <div className="stats-panel">
-
-      {/* ════════════════════════════════════════════════════════════
-          ESCAPE ROOM TIMER - Active (not completed)
-          ════════════════════════════════════════════════════════════ */}
-      {(escapeTimerStarted && !challengeFinalCompleted) && (
-        <div className="timer-container">
-          {/* Hero countdown display with conditional critical styling */}
-          <div className={`sp-countdown-hero ${isCountdownCritical ? "sp-countdown-hero--critical" : ""} ${countdownFlash ? "sp-countdown-hero--flash" : ""}`}>
-            {/* "Time Left" label */}
-            <span className="sp-countdown-hero-label">{t("shared.timeLeft")}</span>
-            {/* MM:SS countdown display */}
-            <span className="sp-countdown-hero-value">{countdownText}</span>
-            {/* Optional hint message if timer has expired (time is up but can still continue) */}
-            {escapeTimerExpired && (
-              <p className="sp-countdown-hero-hint">{t("statsPanel.timerExpiredContinue")}</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════
-          ESCAPE ROOM TIMER - Completed (frozen at final time)
-          ════════════════════════════════════════════════════════════ */}
-      {(escapeTimerStarted && challengeFinalCompleted) && (
-        <div className="timer-container">
-          {/* Frozen countdown display with completion styling */}
-          <div className="sp-countdown-hero sp-countdown-hero--completed">
-            <span className="sp-countdown-hero-label">{t("shared.timeLeft")}</span>
-            <span className="sp-countdown-hero-value">{countdownText}</span>
-          </div>
-          {/* Show elapsed time message below frozen timer */}
-          {completionTimeText && (
-            <div className="sp-countdown-hero-hint sp-countdown-hero-hint--completed">
-              {completionTimeText}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ════════════════════════════════════════════════════════════
           STATS PANEL HEADER - Title and System Status Badge

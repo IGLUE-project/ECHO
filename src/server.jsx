@@ -93,6 +93,29 @@ export function makeServer({ environment = "development", language = "es" } = {}
     },
 
     routes() {
+      // Let the Escapp client's HTTP calls reach the real Escapp server. The
+      // Escapp API lives under /api/escapeRooms/... which would otherwise be
+      // intercepted by this Mirage server (namespace "api"). We pass through
+      // exactly the configured escape-room endpoint and its subpaths, so our own
+      // /api/posts, /api/users, etc. are unaffected.
+      try {
+        const passEndpoint = (ep) => {
+          if (typeof ep !== "string" || ep.trim() === "") return;
+          let abs;
+          try {
+            abs = new URL(ep, window.location.origin).href.replace(/\/+$/, "");
+          } catch {
+            return;
+          }
+          this.passthrough(abs);
+          this.passthrough(`${abs}/**`);
+        };
+        passEndpoint(window.ESCAPP_APP_SETTINGS?.escappClientSettings?.endpoint);
+        passEndpoint(new URLSearchParams(window.location.search).get("escapp_endpoint"));
+      } catch (e) {
+        console.warn("Mirage: could not set Escapp passthrough", e);
+      }
+
       this.namespace = "api";
       
       // post routes (public)
@@ -140,17 +163,6 @@ export function makeServer({ environment = "development", language = "es" } = {}
         "/users/unfollow/:followUserId/",
         unfollowUserHandler.bind(this)
       );
-
-      // Allow xAPI requests to pass through to the real LRS
-      const xapiEndpoint = import.meta.env.VITE_XAPI_ENDPOINT;
-      if (xapiEndpoint) {
-        try {
-          const url = new URL(xapiEndpoint);
-          this.passthrough(`${url.origin}/**`);
-        } catch (e) {
-          // Invalid URL, skip passthrough
-        }
-      }
     },
   });
 

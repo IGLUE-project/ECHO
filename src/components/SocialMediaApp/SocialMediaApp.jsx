@@ -8,7 +8,6 @@ import { useStats } from "../../contexts/StatsProvider";
 import { useUser } from "../../contexts/UserProvider";
 import { useMessages } from "../../contexts/MessagesProvider";
 import { useNavigate } from "react-router-dom";
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "../../contexts/XAPIProvider";
 import { assetPath } from "../../utils/assetPath";
 
 /**
@@ -19,7 +18,6 @@ import { assetPath } from "../../utils/assetPath";
  * - Implements login authentication (hardcoded credentials: echo/MintAI_mod)
  * - Handles user onboarding and challenge completion tracking
  * - Routes between login screen and main application content
- * - Integrates with xAPI for learning analytics tracking
  * - Manages bot/challenge initialization for the game
  * 
  * @component
@@ -34,19 +32,14 @@ export const SocialMediaApp = ({ mode = "window" }) => {
   // Translation hook for multilingual support
   const { t } = useTranslation();
   
-  // Challenge progress tracking, bot count management, and escape timer
+  // Challenge progress tracking and bot count management
   const {
     challenge1Completed, setSuspectUsersCount,
-    escapeTimerStarted, escapeTimerRemainingMs, escapeTimerFlashTick,
-    challengeFinalCompleted,
   } = useStats();
-  
+
   // User data from global state
   const { userState } = useUser();
-  
-  // xAPI tracking for learning analytics
-  const { sendStatement } = useXAPI();
-  
+
   // Message system for in-game notifications
   const { addMessage } = useMessages();
   
@@ -92,28 +85,6 @@ export const SocialMediaApp = ({ mode = "window" }) => {
   
   // Track previous login state to detect transitions from false to true
   const prevLoginDoneRef = useRef(loginDone);
-
-  // Countdown timer for mobile/tablet titlebar
-  const isCountdownCritical = escapeTimerRemainingMs <= 5 * 60 * 1000;
-  const [countdownFlash, setCountdownFlash] = useState(false);
-  const lastFlashTickRef = useRef(escapeTimerFlashTick);
-  const showTitlebarCountdown = escapeTimerStarted && !challengeFinalCompleted;
-
-  const countdownText = useMemo(() => {
-    const totalSeconds = Math.max(0, Math.ceil(escapeTimerRemainingMs / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }, [escapeTimerRemainingMs]);
-
-  useEffect(() => {
-    if (!escapeTimerStarted || challengeFinalCompleted || !escapeTimerFlashTick) return;
-    if (escapeTimerFlashTick <= lastFlashTickRef.current) return;
-    lastFlashTickRef.current = escapeTimerFlashTick;
-    setCountdownFlash(true);
-    const id = setTimeout(() => setCountdownFlash(false), isCountdownCritical ? 1700 : 1300);
-    return () => clearTimeout(id);
-  }, [escapeTimerFlashTick, escapeTimerStarted, challengeFinalCompleted, isCountdownCritical]);
 
   /**
    * Determine if login is required
@@ -179,7 +150,6 @@ export const SocialMediaApp = ({ mode = "window" }) => {
    * Validates credentials (hardcoded: echo/MintAI_mod)
    * On success:
    * - Saves login state to sessionStorage
-   * - Sends xAPI tracking statement (app access)
    * - Navigates to home page
    * On failure:
    * - Displays localized error message
@@ -198,19 +168,7 @@ export const SocialMediaApp = ({ mode = "window" }) => {
       sessionStorage.setItem("socialLoginDone", "true");
       setLoginDone(true);
       setLoginErrorKey(""); // Clear any previous errors
-      
-      // Send xAPI learning analytics statement
-      sendStatement(
-        XAPI_VERBS.ACCESSED,
-        ECHO_ACTIVITIES.SOCIAL_APP,
-        null,
-        {
-          contextActivities: {
-            grouping: [ECHO_ACTIVITIES.GAME],
-          },
-        }
-      );
-      
+
       // Navigate to home page
       navigate("/", { replace: true });
       return;
@@ -236,16 +194,6 @@ export const SocialMediaApp = ({ mode = "window" }) => {
             />
           </div>
           
-          {/* Countdown timer: visible only on mobile/tablet via CSS */}
-          {showTitlebarCountdown && (
-            <div
-              className={`titlebar-countdown${isCountdownCritical ? " titlebar-countdown--critical" : ""}${countdownFlash ? " titlebar-countdown--flash" : ""}`}
-            >
-              <span className="titlebar-countdown-label">{t("shared.timeLeft")}</span>
-              <span className="titlebar-countdown-value">{countdownText}</span>
-            </div>
-          )}
-
           {/* Window control buttons (minimize and close) */}
           <div className="window-controls">
             {/* Minimize button */}

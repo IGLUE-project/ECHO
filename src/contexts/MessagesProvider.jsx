@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStats } from "./StatsProvider.jsx";
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "./XAPIProvider.jsx";
 
 /**
  * MessagesContext
@@ -12,10 +11,9 @@ import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "./XAPIProvider.jsx";
  * - Challenge instructions for each puzzle (Challenge 1, 2, 3, and Final)
  * - Message read/unread state
  * - Toast notifications when new messages arrive
- * 
+ *
  * Integrates with:
  * - SessionStorage for persisting message read status
- * - xAPI for tracking when players read instructions (learning analytics)
  * - StatsProvider for marking challenge milestones as read
  */
 const MessagesContext = createContext();
@@ -134,15 +132,12 @@ const buildInitialMessages = () => {
  * - Initialize messages array from sessionStorage
  * - Track unread message count
  * - Handle marking messages as read
- * - Send xAPI learning analytics statements when instructions are read
  * - Dispatch callbacks to StatsProvider for challenge milestone tracking
  * - Show toast notifications when new messages arrive or onboarding completes
- * - Prevent duplicate xAPI statements using a ref guard
- * 
+ *
  * Integrations:
  * - SessionStorage: Persists message read status
  * - StatsProvider: Marks challenge instructions as read for stats tracking
- * - XAPIProvider: Sends "LOOKED_AT" statements for learning analytics
  * - Window events: Listens for onboardingComplete, dispatches openDrawer and bossMessage
  * 
  * @component
@@ -161,9 +156,6 @@ export const MessagesProvider = ({ children }) => {
     markChallenge3InstructionsRead,
     markChallengeFinalInstructionsRead,
   } = useStats();
-  
-  // Get xAPI function to send learning analytics statements
-  const { sendStatement } = useXAPI();
 
   // Messages state: initialized from sessionStorage
   // Contains all message objects with id, fromKey, subjectKey, contentKey, timestamp, read
@@ -177,10 +169,10 @@ export const MessagesProvider = ({ children }) => {
   // Set to true after first notification is shown
   const notificationShownRef = useRef(false);
   
-  // Guard to prevent duplicate xAPI statements
-  // Stores message IDs that have already sent xAPI statements
+  // Guard to prevent processing a message's read side effects more than once
+  // Stores message IDs that have already been processed
   // Necessary because markAsRead can be called multiple times in React Strict Mode
-  const xapiSentRef = useRef(new Set());
+  const processedRef = useRef(new Set());
 
   /**
    * Show mission/boss message toast notification
@@ -253,142 +245,47 @@ export const MessagesProvider = ({ children }) => {
    * 1. Updates message.read = true in state
    * 2. Saves read status to sessionStorage for persistence
    * 3. Dispatch to StatsProvider to mark challenge as read (for stats tracking)
-   * 4. Send xAPI LOOKED_AT statement for learning analytics
-   * 
+   *
    * Special Handling by Message Type:
-   * - Mission Brief: Saves to sessionStorage, sends xAPI with Puzzle 1 context
-   * - Challenge 1: Calls markChallenge1InstructionsRead(), sends xAPI
-   * - Challenge 2: Calls markChallenge2InstructionsRead(), sends xAPI with Puzzle 2 context
-   * - Challenge 3: Calls markChallenge3InstructionsRead(), sends xAPI with Puzzle 3 context
-   * - Final: Calls markChallengeFinalInstructionsRead(), sends xAPI with Final context
-   * 
-   * xAPI Statements:
-   * - VERB: LOOKED_AT (player viewed the instructions)
-   * - OBJECT: Lesson activity with ID like "puzzle1/instructions"
-   * - CONTEXT: Parent activity (puzzle) and grouping (game)
-   * - Prevents duplicates using xapiSentRef guard (needed for React Strict Mode)
-   * 
+   * - Mission Brief: Saves to sessionStorage
+   * - Challenge 1: Calls markChallenge1InstructionsRead()
+   * - Challenge 2: Calls markChallenge2InstructionsRead()
+   * - Challenge 3: Calls markChallenge3InstructionsRead()
+   * - Final: Calls markChallengeFinalInstructionsRead()
+   *
+   * Prevents duplicate processing using processedRef guard (needed for React Strict Mode)
+   *
    * @param {number} messageId - ID of the message to mark as read
    */
   const markAsRead = (messageId) => {
     const target = messages.find((msg) => msg.id === messageId);
     if (!target || target.read) return;
 
-    // Guard: prevents duplicate xAPI statements if markAsRead is called multiple times
+    // Guard: prevents duplicate side effects if markAsRead is called multiple times
     // before React processes the state update (e.g., in React Strict Mode)
-    if (!xapiSentRef.current.has(messageId)) {
-      xapiSentRef.current.add(messageId);
+    if (!processedRef.current.has(messageId)) {
+      processedRef.current.add(messageId);
 
       // Handle each message type differently based on content
       if (target.contentKey === "messagesApp.messages.missionBrief.content") {
         // Mission Brief: Mark as read in sessionStorage
         sessionStorage.setItem("missionBriefRead", "true");
-        // Send xAPI statement: player viewed Puzzle 1 instructions
-        sendStatement(
-          XAPI_VERBS.LOOKED_AT,
-          {
-            id: `${ECHO_ACTIVITIES.PUZZLE_1.id}/instructions`,
-            definition: {
-              name: { en: "Puzzle 1 Instructions" },
-              type: "http://adlnet.gov/expapi/activities/lesson",
-            },
-          },
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.PUZZLE_1],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-          }
-        );
       }
       if (target.contentKey === "messagesApp.messages.challenge1.content") {
         // Challenge 1: Mark as read in StatsProvider
         markChallenge1InstructionsRead();
-        // Send xAPI statement: player viewed Challenge 1 instructions
-        sendStatement(
-          XAPI_VERBS.LOOKED_AT,
-          {
-            id: `${ECHO_ACTIVITIES.PUZZLE_1.id}/challenge1`,
-            definition: {
-              name: { en: "Challenge 1 Instructions" },
-              type: "http://adlnet.gov/expapi/activities/lesson",
-            },
-          },
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.PUZZLE_1],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-          }
-        );
       }
       if (target.contentKey === "messagesApp.messages.challenge2.content") {
         // Challenge 2: Mark as read in StatsProvider
         markChallenge2InstructionsRead();
-        // Send xAPI statement: player viewed Challenge 2 instructions
-        sendStatement(
-          XAPI_VERBS.LOOKED_AT,
-          {
-            id: `${ECHO_ACTIVITIES.PUZZLE_2.id}/instructions`,
-            definition: {
-              name: { en: "Puzzle 2 Instructions" },
-              type: "http://adlnet.gov/expapi/activities/media",
-            },
-          },
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.PUZZLE_2],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-          }
-        );
       }
       if (target.contentKey === "messagesApp.messages.challenge3.content") {
         // Challenge 3: Mark as read in StatsProvider
         markChallenge3InstructionsRead();
-        // Send xAPI statement: player viewed Challenge 3 instructions
-        sendStatement(
-          XAPI_VERBS.LOOKED_AT,
-          {
-            id: `${ECHO_ACTIVITIES.PUZZLE_3.id}/instructions`,
-            definition: {
-              name: { en: "Puzzle 3 Instructions" },
-              type: "http://adlnet.gov/expapi/activities/media",
-            },
-          },
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.PUZZLE_3],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-          }
-        );
       }
       if (target.contentKey === "messagesApp.messages.challengeFinal.content") {
         // Final Challenge: Mark as read in StatsProvider
         markChallengeFinalInstructionsRead();
-        // Send xAPI statement: player viewed Final challenge instructions
-        sendStatement(
-          XAPI_VERBS.LOOKED_AT,
-          {
-            id: `${ECHO_ACTIVITIES.FINAL.id}/instructions`,
-            definition: {
-              name: { en: "Final Puzzle Instructions" },
-              type: "http://adlnet.gov/expapi/activities/media",
-            },
-          },
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.FINAL],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-          }
-        );
       }
     }
 

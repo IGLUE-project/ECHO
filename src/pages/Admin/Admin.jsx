@@ -7,7 +7,7 @@ import { useUser } from "../../contexts/UserProvider.jsx";
 import { useLoggedInUser } from "../../contexts/LoggedInUserProvider.jsx";
 import { useStats } from "../../contexts/StatsProvider.jsx";
 import { useMessages } from "../../contexts/MessagesProvider.jsx";
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "../../contexts/XAPIProvider.jsx";
+import { useEscapp } from "../../contexts/EscappProvider.jsx";
 import { useOS } from "../../contexts/OSProvider.jsx";
 import { Navbar } from "../../components/Navbar/Navbar";
 import { StatsPanel } from "../../components/StatsPanel/StatsPanel";
@@ -35,7 +35,7 @@ export const Admin = () => {
     const { userState } = useUser();
     const { reduceMisinformation, completeChallenge1, challenge1Completed, setSuspectUsersCount, setChallenge1Progress } = useStats();
     const { addMessage } = useMessages();
-    const { sendStatement, trackChallengeStarted } = useXAPI();
+    const { submitChallenge } = useEscapp();
     const navigate = useNavigate();
     // User classifications: { username: 'yes'|'no' } restored from sessionStorage on reload
     const [classifiedUsers, setClassifiedUsers] = useState(() => {
@@ -63,17 +63,6 @@ export const Admin = () => {
     const [gameResult, setGameResult] = useState(null);
     const [isPerfectResult, setIsPerfectResult] = useState(false);
     const [isFirstVisit, setIsFirstVisit] = useState(() => !sessionStorage.getItem('echo:adminHintSeen:1'));
-    // Prevents auto-submit from firing multiple times when all users are correctly classified
-    const autoSubmitTriggeredRef = useRef(false);
-
-    // Initialize challenge timer (fallback for direct URL access)
-    useEffect(() => {
-        if (challenge1Completed) return;
-        if (!sessionStorage.getItem('echo:challengeStart:1')) {
-            trackChallengeStarted('1', 'Puzzle 1 - Bot Detection');
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
 
     const handleOpenHint = () => {
         setShowHint(true);
@@ -117,11 +106,19 @@ export const Admin = () => {
 
         const shuffledBots = [...bots].sort(() => Math.random() - 0.5);
         const shuffledHumans = [...humans].sort(() => Math.random() - 0.5);
+        const pickedBots = shuffledBots.slice(0, 3);
+        const pickedHumans = shuffledHumans.slice(0, 2);
 
+        // Fixed arrangement so the correct real/fake sequence is constant ("10010",
+        // 1 = real/human, 0 = fake/bot) and can be verified server-side by Escapp.
+        // The account identities are still random; only their positions are fixed.
         const selected = [
-            ...shuffledBots.slice(0, 3),
-            ...shuffledHumans.slice(0, 2),
-        ].sort(() => Math.random() - 0.5);
+            pickedHumans[0],
+            pickedBots[0],
+            pickedBots[1],
+            pickedHumans[1],
+            pickedBots[2],
+        ].filter(Boolean);
 
         const selectedUsernames = selected.map(u => u.username);
         sessionStorage.setItem('adminGameUsernames', JSON.stringify(selectedUsernames));
@@ -187,165 +184,72 @@ export const Admin = () => {
         setChallenge1Progress(correctCount);
     }, [suspectUsers, classifiedUsers, quizSubmittedByUser, setChallenge1Progress]);
 
-    // Validate classification: correct label + quiz passed if bot
-    const isCorrectClassification = (user) => {
-        const classification = normalizeClassification(classifiedUsers[user.username]);
-        const isBot = user?.puzzle?.isBot;
-        const isClassificationCorrect =
-            (classification === CLASSIFICATION.YES && isBot) ||
-            (classification === CLASSIFICATION.NO && !isBot);
-
-        if (!isClassificationCorrect) return false;
-
-        // Bots also need quiz pass; humans only need correct classification
-        if (isBot) {
-            return Boolean(quizSubmittedByUser[user.username]);
-        }
-
-        return true;
-    };
-
     // Navigate to user profile with game state marker
     const handleProfileClick = (username) => {
         sessionStorage.setItem('fromAdmin', 'true');
         navigate(`/profile/${username}`);
     };
 
-    const allUsersCorrectlyClassified =
+    // The player can run the final check once every account has a classification, and
+    // every account they flagged as a bot (that really is one) has its indicator quiz
+    // done. Wrong classifications are allowed — Escapp decides right/wrong.
+    const canCheck =
         suspectUsers.length > 0 &&
         suspectUsers.every((user) => {
-            const classification = classifiedUsers[user.username];
-            if (!classification) return false;
-            return isCorrectClassification(user);
+            const label = classifiedUsers[user.username];
+            if (!label) return false;
+            if (normalizeClassification(label) === CLASSIFICATION.YES && user.puzzle?.isBot) {
+                return Boolean(quizSubmittedByUser[user.username]);
+            }
+            return true;
         });
 
-    // Auto-submit when all 5 users are correctly classified (flag prevents firing twice)
-    useEffect(() => {
-        if (challenge1Completed) return;
+    // Submit the real/fake sequence for the 5 accounts (display order, 1 = real/human,
+    // 0 = fake/bot) to Escapp for server-side verification.
+    const handleCheck = () => {
+        if (!canCheck || challenge1Completed) return;
 
-        if (!allUsersCorrectlyClassified) {
-            autoSubmitTriggeredRef.current = false;
-            return;
-        }
+        const answer = suspectUsers
+            .map((u) => (normalizeClassification(classifiedUsers[u.username]) === CLASSIFICATION.NO ? "1" : "0"))
+            .join("");
 
-        if (autoSubmitTriggeredRef.current) return; // Already triggered this render cycle
-        autoSubmitTriggeredRef.current = true;
-        handleSubmit();
-    }, [allUsersCorrectlyClassified, challenge1Completed]);
+        submitChallenge(2, answer, (success) => {
+            // Local label-correctness count, for the result modal's feedback only.
+            const correct = suspectUsers.filter((u) => {
+                const c = normalizeClassification(classifiedUsers[u.username]);
+                return (c === CLASSIFICATION.YES && u.puzzle?.isBot) || (c === CLASSIFICATION.NO && !u.puzzle?.isBot);
+            }).length;
+            setGameResult({ correct, incorrect: suspectUsers.length - correct, total: suspectUsers.length });
+            setIsPerfectResult(success);
+            setShowResult(true);
 
-    // Evaluate all classifications and send xAPI statements (succeeded/failed)
-    const handleSubmit = () => {
-        let correct = 0;
-        let incorrect = 0;
+            if (!success) return;
 
-        suspectUsers.forEach(user => {
-            const userClassification = normalizeClassification(classifiedUsers[user.username]);
-            const isBot = user.puzzle?.isBot;
-
-            if ((userClassification === CLASSIFICATION.YES && isBot) || (userClassification === CLASSIFICATION.NO && !isBot)) {
-                correct++;
-            } else {
-                incorrect++;
-            }
-        });
-
-        const isPerfect = correct === suspectUsers.length;
-        const scaledScore = suspectUsers.length > 0 ? correct / suspectUsers.length : 0;
-
-        setGameResult({ correct, incorrect, total: suspectUsers.length });
-        setShowResult(true);
-
-        // Perfect score: mark challenge complete, reduce misinformation, send xAPI succeeded+completed
-        if (isPerfect) {
-            setIsPerfectResult(true);
-            // Only send xAPI once per challenge (dedup key prevents double-send on render)
-            const completedKey1 = 'echo:challengeCompleted:1';
-            if (!sessionStorage.getItem(completedKey1)) {
-                sessionStorage.setItem(completedKey1, '1');
-
-                const context1 = {
-                    contextActivities: {
-                        parent: [ECHO_ACTIVITIES.PUZZLE_1],
-                        grouping: [ECHO_ACTIVITIES.GAME],
-                    },
-                };
-
-                // Send "succeeded" with score: raw count and scaled (0-1)
-                sendStatement(
-                    XAPI_VERBS.SUCCEEDED,
-                    ECHO_ACTIVITIES.PUZZLE_1,
-                    {
-                        success: true,
-                        completion: true,
-                        score: { scaled: scaledScore, raw: correct, min: 0, max: suspectUsers.length },
-                    },
-                    context1
-                );
-
-                // Send "completed" with total time taken (don't clear start time yet for retries)
-                const startRaw1 = sessionStorage.getItem('echo:challengeStart:1');
-                const completedResult1 = { completion: true };
-                if (startRaw1 && Number.isFinite(Number(startRaw1))) {
-                    const durationMs1 = Date.now() - Number(startRaw1);
-                    completedResult1.duration = `PT${Math.max(0, Math.round(durationMs1 / 1000))}S`;
-                    completedResult1.extensions = { "https://endgameproject.github.io/xapi/ext/durationMs": durationMs1 };
-                }
-                sessionStorage.removeItem('echo:challengeStart:1');
-                sendStatement(XAPI_VERBS.COMPLETED, ECHO_ACTIVITIES.PUZZLE_1, completedResult1, context1);
-            }
-        } else {
-            // Fail: send failed statement with duration. Keep start time so retries accumulate time
-            const startRaw = sessionStorage.getItem('echo:challengeStart:1');
-            const failResult = {
-                success: false,
-                completion: false,
-                score: { scaled: scaledScore },
-            };
-            if (startRaw && Number.isFinite(Number(startRaw))) {
-                const durationMs = Date.now() - Number(startRaw);
-                failResult.duration = `PT${Math.max(0, Math.round(durationMs / 1000))}S`;
-            }
-            sendStatement(
-                XAPI_VERBS.FAILED,
-                ECHO_ACTIVITIES.PUZZLE_1,
-                failResult,
-                {
-                    contextActivities: {
-                        parent: [ECHO_ACTIVITIES.GAME],
-                        grouping: [ECHO_ACTIVITIES.GAME],
-                    },
-                }
-            );
-        }
-    };
-
-    // Close modal (retry) or complete challenge (perfect score sends Challenge 2 message)
-    const handleTryAgain = () => {
-        setShowResult(false);
-        setGameResult(null);
-        autoSubmitTriggeredRef.current = false;
-        if (isPerfectResult) {
-            setIsPerfectResult(false);
-            reduceMisinformation(30); // Decrease misinformation stat in StatsPanel
-            completeChallenge1(); // Mark challenge 1 as completed in stats
-            // Wipe all game state from sessionStorage
+            // Correct: complete the challenge and queue the next briefing.
+            reduceMisinformation(30);
+            completeChallenge1();
             sessionStorage.removeItem('adminGameUsernames');
             sessionStorage.removeItem('adminGameState');
             sessionStorage.removeItem('adminGameQuizState');
             sessionStorage.removeItem('fromAdmin');
             setClassifiedUsers({});
             setQuizSubmittedByUser({});
-            // Queue Challenge 2 instructions message
             sessionStorage.setItem("challenge2InstructionsSent", JSON.stringify(true));
             addMessage({
                 fromKey: "messagesApp.author.name",
                 subjectKey: "messagesApp.messages.challenge2.subject",
                 contentKey: "messagesApp.messages.challenge2.content",
             });
-            // Notify UI to show message drawer and boss message event
             window.dispatchEvent(new Event("openDrawer"));
             window.dispatchEvent(new Event("bossMessage"));
-        }
+        });
+    };
+
+    // Close the result modal (used to retry after an incorrect check).
+    const handleTryAgain = () => {
+        setShowResult(false);
+        setGameResult(null);
+        setIsPerfectResult(false);
     };
 
     return (
@@ -397,8 +301,8 @@ export const Admin = () => {
                                             </p>
                                             <p className="username">@{user?.username}</p>
                                         </div>
-                                        {isCorrectClassification(user) && (
-                                            <div className="classification-status" title={t('profile.classificationCorrectHuman')}>
+                                        {classifiedUsers[user.username] && (
+                                            <div className="classification-status" title={t('admin.classifiedMarker', 'Classified')}>
                                                 <span aria-hidden="true">✓</span>
                                             </div>
                                         )}
@@ -408,6 +312,18 @@ export const Admin = () => {
                                 <p className="no-suspects">{t('admin.noSuspects')}</p>
                             )}
                         </div>
+
+                        {suspectUsers.length > 0 && !challenge1Completed && (
+                            <div className="admin-check-container">
+                                <button
+                                    className="admin-check-btn"
+                                    onClick={handleCheck}
+                                    disabled={!canCheck}
+                                >
+                                    {t('admin.checkAnswers', 'Check answers')}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </main>
 

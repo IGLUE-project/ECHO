@@ -321,6 +321,13 @@ html.ai-incorrect-no-scroll {
     background: #1c3225;
 }
 
+/* Neutral highlight for the option the player has currently selected
+   (no right/wrong hint — Escapp verifies it on submit). */
+.ai-incorrect-option.selected-option {
+    border-color: #4a90d9;
+    background: #1b2733;
+}
+
 .reply-status-line {
     margin-top: 8px;
     min-height: 24px;

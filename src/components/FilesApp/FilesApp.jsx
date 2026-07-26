@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import "./FilesApp.css";
 import { useOS } from "../../contexts/OSProvider";
 // Import translation hook for multi-language support
 import { useTranslation } from "react-i18next";
-// Import xAPI tracking for learning analytics and activity logging
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "../../contexts/XAPIProvider";
 // Import UI icons for file explorer interface
 import { FaTimes, FaMinus, FaFolder, FaFolderOpen, FaLock, FaChevronRight, FaHome, FaArrowLeft } from "react-icons/fa";
 // Import utility function to resolve asset paths
@@ -33,8 +31,7 @@ const FOLDERS = [
  * - Locked folder (echo) with access restrictions
  * - Breadcrumb navigation
  * - Back button functionality
- * - xAPI tracking for learning analytics
- * 
+ *
  * @returns {JSX.Element} The complete file explorer window
  */
 export const FilesApp = () => {
@@ -42,30 +39,8 @@ export const FilesApp = () => {
   const { closeApp, minimizeApp } = useOS();
   // Get translation function for localized strings
   const { t } = useTranslation();
-  // Get xAPI statement sending function for tracking user interactions
-  const { sendStatement } = useXAPI();
   // State for tracking which folder is currently open (null = home/root)
   const [openFolder, setOpenFolder] = useState(null);
-  // Ref to ensure xAPI statement is only sent once on mount
-  const sentRef = useRef(false);
-
-  /**
-   * Track app view on component mount
-   * Sends xAPI statement indicating user viewed the Files App
-   * Only executed once using sentRef to prevent duplicate tracking
-   */
-  useEffect(() => {
-    // Skip if statement already sent
-    if (sentRef.current) return;
-    sentRef.current = true;
-    // Send xAPI statement for viewing files app
-    sendStatement(
-      XAPI_VERBS.LOOKED_AT,
-      ECHO_ACTIVITIES.FILES_APP,
-      null,
-      { contextActivities: { grouping: [ECHO_ACTIVITIES.GAME] } }
-    );
-  }, []);
 
   /**
    * Handle app close button click

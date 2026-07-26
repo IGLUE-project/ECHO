@@ -5,9 +5,8 @@ import { FaFeather } from "../../utils/icons.jsx";
 // Components
 import { CreatePostForm } from "../../components/CreatePostForm/CreatePostForm";
 import { CommunityNote } from "../CommunityNote/CommunityNote.jsx";
-// Context providers: challenge completion state, XAPI tracking
+// Context providers: challenge completion state
 import { useStats } from "../../contexts/StatsProvider.jsx";
-import { useXAPI } from "../../contexts/XAPIProvider.jsx";
 // Notification component for locked state messages
 import { PopupNotification } from "../../components/PopupNotification/PopupNotification";
 
@@ -27,8 +26,6 @@ export const NewPostLauncher = () => {
     challengeFinalCompleted,
     challengeFinalInstructionsRead,
   } = useStats();
-  // XAPI tracking helper: track when user starts challenge 4
-  const { trackChallengeStarted } = useXAPI();
   // UI state: toggle create post modal visibility
   const [isCreateNewPostClicked, setIsCreateNewPostClicked] = useState(false);
   // Popup state: display lock message when button is disabled
@@ -58,10 +55,6 @@ export const NewPostLauncher = () => {
   // Handle button click: open post modal if unlocked, or show lock message popup
   const handleButtonClick = (event) => {
     if (!isLocked) {
-      // Unlock successful: track challenge 4 start if showing Community Note
-      if (shouldShowCommunityNote && !sessionStorage.getItem('echo:challengeStart:4')) {
-        trackChallengeStarted('4', 'Puzzle 4 - Community Note');
-      }
       // Toggle modal visibility
       setIsCreateNewPostClicked((prev) => !prev);
       return;

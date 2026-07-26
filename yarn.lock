@@ -852,6 +852,11 @@
     "@types/babel__core" "^7.20.5"
     react-refresh "^0.18.0"
 
+adm-zip@^0.5.16:
+  version "0.5.18"
+  resolved "https://registry.npmjs.org/adm-zip/-/adm-zip-0.5.18.tgz"
+  integrity sha512-ufJnssQGbxzLNS1Ho9bCtX4rQKCCvoVuDLHoJyc3F9dOGDB4BkWs2Ci0kv53lqocAEQ/Cbi+I2XCsNYGqVYqng==
+
 ansi-regex@^5.0.1:
   version "5.0.1"
   resolved "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz"

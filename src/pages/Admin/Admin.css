@@ -34,6 +34,37 @@
   box-shadow: 0 6px 20px rgba(127, 85, 255, 0.5);
 }
 
+.admin-check-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.admin-check-btn {
+  padding: 0.8rem 2.2rem;
+  background-color: #20db58;
+  color: #08210f;
+  border: none;
+  border-radius: 25px;
+  font-weight: 800;
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(32, 219, 88, 0.3);
+}
+
+.admin-check-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(32, 219, 88, 0.5);
+}
+
+.admin-check-btn:disabled {
+  background-color: #3d424d;
+  color: #8b90a0;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .hint-button--pulse {
   animation: pulse-glow 1.2s ease-in-out infinite, scale-pulse 1.2s ease-in-out infinite;
   color: white;

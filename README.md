@@ -2,7 +2,7 @@
 
 ECHO is an educational web application of the escape room type. It simulates a desktop with several internal apps and a social network where the player acts as a content moderator to solve challenges about digital misinformation and artificial intelligence.
 
-The project is built with React + Vite, uses MirageJS as a simulated in-memory backend, i18next for internationalization, and xAPI to send learning analytics to an optional LRS.
+The project is built with React + Vite, uses MirageJS as a simulated in-memory backend, and i18next for internationalization.
 
 ## Game Flow
 
@@ -41,7 +41,7 @@ The main screen is a desktop with an app drawer:
 | Messages | Shows initial briefing and instructions for each challenge. Opening the app marks messages as read. |
 | ECHO | Social network where you navigate the feed, profiles, and challenges. Locked until the briefing is read. |
 | Files | Simulated file explorer with empty folders and a locked ECHO folder. |
-| Hints | Shows contextual hints per challenge and logs queries via xAPI. Also allows replaying introductory videos. |
+| Hints | Shows contextual hints per challenge. Also allows replaying introductory videos. |
 
 ## Stack
 
@@ -53,7 +53,6 @@ The main screen is a desktop with an app drawer:
 | Simulated Backend | MirageJS |
 | HTTP | Axios |
 | i18n | i18next, react-i18next, i18next-browser-languagedetector |
-| Analytics | xAPI 1.0 over `fetch` |
 | Auxiliary UI | react-hot-toast, react-awesome-reveal, react-icons |
 | Dates | Day.js + custom helpers |
 | Data/Scripts | ExcelJS, dotenv |
@@ -84,8 +83,6 @@ Create a `.env` at the root using `example.env` as a base.
 ```env
 VITE_JWT_SECRET="any"
 XLSX_URL="https://docs.google.com/spreadsheets/d/..."
-VITE_XAPI_ENDPOINT="https://your_xapi_endpoint.com/data/xAPI"
-VITE_XAPI_AUTH="your_base64_encoded_key_secret"
 ```
 
 Relevant variables:
@@ -93,12 +90,8 @@ Relevant variables:
 | Variable | Usage |
 |----------|-------|
 | `XLSX_URL` | Required for `npm run update-i18n`. It is the URL of the master Excel file. |
-| `VITE_XAPI_ENDPOINT` | Base endpoint of the LRS. The app sends statements to `${endpoint}/statements`. |
-| `VITE_XAPI_AUTH` | Basic Auth credential in base64. Also accepts the `Basic` prefix. |
 | `VITE_BASE_PATH` | Vite base path. The `build:gh-pages` script sets it to `/ECHO/`. |
 | `VITE_JWT_SECRET` | Preserved in `example.env`; the current app does not use real JWT authentication. |
-
-If xAPI is not configured, the game continues to work and only logs warnings in development.
 
 ## Commands
 
@@ -154,7 +147,7 @@ src/
     SurveyModal/                   # Final survey
     Taskbar/                       # Taskbar available for the simulation
   constants/langs/                 # Translations es, en, fi, sr
-  contexts/                        # Global state for users, posts, messages, OS, stats and xAPI
+  contexts/                        # Global state for users, posts, messages, OS and stats
   pages/
     Admin/                         # Challenge 1
     AIContent/                     # Challenge 2
@@ -277,7 +270,6 @@ The app uses Context API to coordinate global state:
 
 | Provider | Responsibility |
 |----------|-----------------|
-| `XAPIProvider` | xAPI actor, statement sending and tracking helpers. |
 | `UserProvider` | List of users loaded from Mirage. |
 | `LoggedInUserProvider` | Official ECHO moderator user. |
 | `PostsProvider` | Posts, likes, comments and reload by language. |
@@ -286,21 +278,6 @@ The app uses Context API to coordinate global state:
 | `MessagesProvider` | Messages, read/unread and unlockable instructions. |
 
 Game progress is saved mainly in `sessionStorage`. There is support for session resumption and for resuming onboarding from a checkpoint if the page reloads during the pretest or the second video.
-
-## xAPI
-
-The app emits statements for events like:
-
-- game start and end;
-- session exit/resumption;
-- instruction reading;
-- challenge start and completion;
-- correct and incorrect answers;
-- profile visits;
-- hint consultation;
-- final survey.
-
-Verb and activity constants are in `src/contexts/XAPIProvider.jsx`.
 
 ## Deployment
 

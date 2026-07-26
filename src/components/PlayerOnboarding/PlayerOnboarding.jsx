@@ -1,60 +1,40 @@
 import "./PlayerOnboarding.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-// xAPI tracker context for learning analytics - tracks player interactions
-// XAPI_VERBS: constants for xAPI verb types (STARTED, ANSWERED, etc.)
-// ECHO_ACTIVITIES: predefined activities for game progression
-// XAPI_EXTENSIONS: custom extension fields for game-specific tracking
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES, XAPI_EXTENSIONS } from "../../contexts/XAPIProvider.jsx";
-// Stats context - provides game statistics and state management
-import { useStats } from "../../contexts/StatsProvider.jsx";
+import { toast } from "react-hot-toast";
 // Pre-test statements data (localized true/false statements for knowledge assessment)
 import statementsData from "../../pages/CommunityNote/CommunityNoteStatements.json";
+// Escapp puzzle submission (the pre-test is puzzle 1)
+import { useEscapp } from "../../contexts/EscappProvider.jsx";
 // Utility for resolving asset paths (videos, images, etc.)
 import { assetPath } from "../../utils/assetPath";
 
 /**
  * PlayerOnboarding Component
- * 
- * Complete onboarding flow for new players including:
- * - Player profile form (name, age)
- * - Language selection with flag icons
- * - Intro video playback (supports multi-language videos)
- * - Pre-test quiz (selects required true/false statements)
- * - xAPI tracking of all onboarding interactions
- * - Session initialization for the escape room game
- * 
- * @param {Function} onComplete - Callback fired when onboarding completes with finalizedPlayerData
- * @returns {JSX.Element} Full-screen onboarding overlay with conditional rendering of steps
+ *
+ * Pre-game sequence shown after Escapp validation:
+ * - Intro video 1
+ * - Pre-test quiz (select the required true/false statements)
+ * - Intro video 2
+ *
+ * Identity, timer and escape state are owned by Escapp. The language is fixed by
+ * Escapp settings (already applied to i18n), so there is no name/age/language form.
+ *
+ * @param {Function} onComplete - Callback fired when onboarding completes
+ * @returns {JSX.Element|null} Full-screen onboarding overlay, or null while loading
  */
-// Module-level cache — survives component re-mounts but is cleared on page
-// refresh or "Start Over" (both trigger a full page reload).
-let _cachedName = "";
-let _cachedAge = "";
-
 export const PlayerOnboarding = ({ onComplete }) => {
-  // i18n hook - t() for translations, i18n for language configuration and change
   const { i18n, t } = useTranslation();
+  const { submitChallenge } = useEscapp();
 
-  // xAPI context - initializeActor creates player profile for tracking, sendStatement logs interactions
-  const { initializeActor, sendStatement } = useXAPI();
-  // Stats context - startEscapeTimer begins the game countdown timer after onboarding
-  const { startEscapeTimer } = useStats();
+  // Language is fixed by Escapp settings (applied to i18n at boot).
+  const selectedLanguage = i18n.resolvedLanguage || i18n.language || "es";
 
-  // Current step in onboarding flow: "playerForm" → "intro1Video" → "pretest" → "intro2Video" → complete
-  const [step, setStep] = useState("playerForm");
-  // Form field states for player profile
-  const [playerName, setPlayerName] = useState(_cachedName);
-  const [playerAge, setPlayerAge] = useState(_cachedAge);
-  // Selected language for the game session (affects video selection and text translations)
-  const [selectedLanguage, setSelectedLanguage] = useState(i18n.language || "en");
-  // Form validation errors - keys are field names (name, age)
-  const [errors, setErrors] = useState({});
-  // Stores player profile data once form is validated (name, age, language)
-  const [playerData, setPlayerData] = useState(null);
+  // Current step: "loading" -> "intro1Video" -> "pretest" -> "intro2Video" -> complete
+  const [step, setStep] = useState("loading");
   // Array of selected statement IDs from pre-test quiz
   const [selectedStatements, setSelectedStatements] = useState([]);
-  // Tracks availability of intro1 and intro2 videos for selected language (async probe results)
+  // Tracks availability of intro1 and intro2 videos for the language (async probe results)
   const [videoAvailability, setVideoAvailability] = useState({ intro1: false, intro2: false });
   // Show play button overlay by default so user triggers video playback
   const [needsTapToPlay, setNeedsTapToPlay] = useState(true);
@@ -64,107 +44,43 @@ export const PlayerOnboarding = ({ onComplete }) => {
   // Translation helper - gets text in selectedLanguage with fallback to global t()
   const tx = (key, options = {}) => t(key, { lng: selectedLanguage, ...options });
 
-  // Restore from checkpoint on mount (user refreshed during pretest or intro2 video)
-  useEffect(() => {
-    const raw = sessionStorage.getItem("onboarding:checkpoint");
-    if (raw) {
-      try {
-        const cp = JSON.parse(raw);
-        _cachedName = cp.name;
-        _cachedAge = String(cp.age);
-        setPlayerName(cp.name);
-        setPlayerAge(String(cp.age));
-        setSelectedLanguage(cp.language);
-        setPlayerData({ name: cp.name, age: cp.age, language: cp.language });
-        setVideoAvailability(cp.videoAvailability);
-        i18n.changeLanguage(cp.language);
-        setStep(cp.step || "pretest");
-      } catch { /* ignore corrupt checkpoint */ }
-    }
-  }, []);
-
-  /**
-   * Validates player form inputs
-   * Checks: name is not empty and >= 2 chars, age is between 1-120
-   * Sets error messages and returns validation status
-   */
-  const validateForm = () => {
-    const newErrors = {};
-
-    // Validate name - must not be empty and at least 2 characters
-    if (!playerName.trim()) {
-      newErrors.name = tx("playerOnboarding.nameErrorEmpty");
-    } else if (playerName.trim().length < 2) {
-      newErrors.name = tx("playerOnboarding.nameErrorShort");
-    }
-
-    // Validate age - must be provided and within 1-120 range
-    if (!playerAge) {
-      newErrors.age = tx("playerOnboarding.ageErrorEmpty");
-    } else if (playerAge < 1 || playerAge > 120) {
-      newErrors.age = tx("playerOnboarding.ageErrorInvalid");
-    }
-
-    // Update error state and return true if no errors
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
   // Pre-test statements in selected language with fallback to English
-  // Each statement has: id, text, correct (boolean)
-  // Memoized to avoid recomputation on every render
   const statements = useMemo(
     () => statementsData[selectedLanguage] || statementsData.en || [],
     [selectedLanguage]
   );
 
   // Number of statements player must select correctly in pre-test
-  // Counts total correct answers in Spanish version, defaults to 2 if none found
-  // Used to validate pre-test quiz submission (player must select exactly this many)
   const requiredSelections = useMemo(() => {
     const spanishStatements = statementsData.es || [];
     const totalCorrect = spanishStatements.filter((statement) => statement.correct).length;
     return totalCorrect > 0 ? totalCorrect : 2;
   }, []);
 
-  // Pre-test quiz translations with selectedLanguage
+  // Pre-test quiz translations
   const moderatorFormTitle = t("playerOnboarding.moderatorFormTitle");
-  // Description shows required statement count (e.g., "Select 3 correct statements")
   const moderatorFormDescription = t("playerOnboarding.moderatorFormDescription", {
     lng: selectedLanguage,
     count: requiredSelections,
   });
-  // Submit button text for pre-test form
   const moderatorFormSubmit = t("playerOnboarding.moderatorFormSubmit", { lng: selectedLanguage });
-  // App name for header (ECHO, L'Échos, etc. depending on language)
-  const appName = t("header.appName", { lng: selectedLanguage });
 
   /**
    * Builds absolute path to intro video file
-   * @param {number} introNumber - which intro (1 or 2)
-   * @param {string} language - language code (en, es, fi, sr)
-   * @returns {string} Full asset path to video file
    */
   const getVideoPath = (introNumber, language) => assetPath(`/assets/intro${introNumber}_${language}.mp4`);
 
   /**
-   * Asynchronously probes if a video file exists and is loadable
-   * Creates temporary <video> element to load metadata with 2.5s timeout
-   * Resolves to true if metadata loads, false on error or timeout
-   * @param {string} path - Full URL to video file
-   * @returns {Promise<boolean>} True if video is accessible, false otherwise
+   * Asynchronously probes if a video file exists and is loadable.
    */
   const checkVideoExists = async (path) => {
-    // Check DOM availability (SSR safety)
     const canUseDom = typeof window !== "undefined" && typeof document !== "undefined";
     if (!canUseDom) return false;
 
     return new Promise((resolve) => {
-      // Create temporary video element for metadata probing
       const probeVideo = document.createElement("video");
       let finished = false;
 
-      // Cleanup and resolution helper - ensures only one result returned
       const finish = (result) => {
         if (finished) return;
         finished = true;
@@ -175,229 +91,129 @@ export const PlayerOnboarding = ({ onComplete }) => {
       };
 
       // 5 second timeout — assume video exists if metadata is slow to load
-      // (onError on the actual <video> element will catch truly missing files)
       const timeoutId = window.setTimeout(() => finish(true), 5000);
 
-      // Metadata loaded successfully = video exists and is accessible
       probeVideo.preload = "metadata";
       probeVideo.onloadedmetadata = () => finish(true);
-      // Any load error = video unavailable
       probeVideo.onerror = () => finish(false);
       probeVideo.src = path;
     });
   };
 
   // Save checkpoint so onboarding progress survives a page refresh
-  const saveCheckpoint = (data, availability, savedStep = "pretest") => {
+  const saveCheckpoint = (availability, savedStep = "pretest") => {
     sessionStorage.setItem("onboarding:checkpoint", JSON.stringify({
-      name: data.name,
-      age: data.age,
-      language: data.language,
+      language: selectedLanguage,
       videoAvailability: availability,
       step: savedStep,
     }));
   };
 
   /**
-   * Marks onboarding as complete and initializes game session
-   * Stores player data, starts escape room timer, notifies app
-   * @param {Object} data - Player profile data {name, age, language}
+   * Marks onboarding as complete and hands control to the game.
+   * Emits the signals MessagesProvider uses to show the initial briefing.
    */
-  const completeOnboarding = (data) => {
-    // Checkpoint no longer needed — onboarding is done
+  const completeOnboarding = () => {
     sessionStorage.removeItem("onboarding:checkpoint");
-    // Clear social login session for fresh game session
+    // Clear social login session for a fresh game session
     sessionStorage.removeItem("socialLoginDone");
-
-    // Create final player data object with onboarding completion flag
-    const finalizedPlayerData = {
-      ...data,
-      onboardingCompleted: true,
-    };
-
-    // Store player data in session for game access
-    sessionStorage.setItem("playerData", JSON.stringify(finalizedPlayerData));
-
-    // Dispatch global event to notify other components onboarding is done
+    // MessagesProvider reads this flag + the event to trigger the briefing toast.
+    sessionStorage.setItem("playerData", JSON.stringify({ onboardingCompleted: true }));
     window.dispatchEvent(new Event("onboardingComplete"));
-
-    // Start the escape room countdown timer (player only has limited time)
-    startEscapeTimer();
-
-    // Call parent component callback with finalized player data
-    onComplete(finalizedPlayerData);
+    onComplete();
   };
 
+  // On mount: restore from checkpoint, or probe intro videos and pick the first step.
+  useEffect(() => {
+    let cancelled = false;
+
+    const init = async () => {
+      const raw = sessionStorage.getItem("onboarding:checkpoint");
+      if (raw) {
+        try {
+          const cp = JSON.parse(raw);
+          setVideoAvailability(cp.videoAvailability || { intro1: false, intro2: false });
+          setStep(cp.step || "pretest");
+          return;
+        } catch {
+          /* ignore corrupt checkpoint and re-probe */
+        }
+      }
+
+      const [hasIntro1, hasIntro2] = await Promise.all([
+        checkVideoExists(getVideoPath(1, selectedLanguage)),
+        checkVideoExists(getVideoPath(2, selectedLanguage)),
+      ]);
+      if (cancelled) return;
+
+      const availability = { intro1: hasIntro1, intro2: hasIntro2 };
+      setVideoAvailability(availability);
+      if (hasIntro1) {
+        setStep("intro1Video");
+      } else {
+        saveCheckpoint(availability, "pretest");
+        setStep("pretest");
+      }
+    };
+
+    init();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /**
-   * Toggle selection of pre-test statement
-   * Allows deselecting, adds when under limit, prevents adding beyond required count
-   * @param {string|number} id - Statement ID to toggle
+   * Toggle selection of a pre-test statement.
    */
   const handleStatementClick = (id) => {
     setSelectedStatements((prev) => {
-      // If already selected, remove it (toggle off)
       if (prev.includes(id)) {
         return prev.filter((statementId) => statementId !== id);
       }
-      // If not at limit, add new selection
       if (prev.length < requiredSelections) {
         return [...prev, id];
       }
-      // At limit - ignore attempts to add more
       return prev;
     });
   };
 
   /**
-   * Handles pre-test quiz submission
-   * Sends xAPI ANSWERED statement with correct/incorrect counts
-   * Stores answers to session storage for later reference
-   * Advances to intro2Video if available, otherwise completes onboarding
+   * Handles pre-test quiz submission. The pre-test is Escapp puzzle 1: the player's
+   * selected statement IDs are sent to Escapp, which verifies them server-side.
+   * Advance only when Escapp accepts the answer.
    */
   const handlePretestSubmit = () => {
-    // Get full details of selected statements (map IDs to statement objects)
     const selectedDetails = statements
       .filter((statement) => selectedStatements.includes(statement.id))
-      .map((statement) => ({
-        id: statement.id,
-        text: statement.text,
-        correct: Boolean(statement.correct),
-      }));
+      .map((statement) => ({ id: statement.id, text: statement.text }));
 
-    // Count correct and incorrect selections for xAPI tracking
-    const correctTrueCount = selectedDetails.filter((s) => s.correct).length;
-    const correctFalseCount = selectedDetails.length - correctTrueCount;
+    // Answer format: selected statement IDs, ascending, ';'-joined.
+    const answer = [...selectedStatements].sort((a, b) => a - b).join(";");
 
-    // Format response text with all selected statements (pipe-separated)
-    const responseText = selectedDetails.map((s) => `${s.id}: ${s.text}`).join(" | ");
-
-    // Send xAPI ANSWERED statement with detailed analytics
-    sendStatement(
-      XAPI_VERBS.ANSWERED,
-      {
-        id: `${ECHO_ACTIVITIES.INTRO.id}/pre-test`,
-        definition: {
-          name: { en: "Onboarding Pre-Test" },
-          type: "http://adlnet.gov/expapi/activities/assessment",
-          interactionType: "choice",
-        },
-      },
-      {
-        response: responseText,
-        completion: true,
-        // Custom extensions with answer details and correctness counts
-        extensions: {
-          "https://endgameproject.github.io/xapi/ext/onboardingPretestSelections": selectedDetails.map(
-            (s) => ({
-              id: s.id,
-              text: s.text,
-              correct: s.correct,
-            })
-          ),
-          "https://endgameproject.github.io/xapi/ext/onboardingPretestCorrectTrueCount": correctTrueCount,
-          "https://endgameproject.github.io/xapi/ext/onboardingPretestCorrectFalseCount": correctFalseCount,
-        },
-      },
-      {
-        contextActivities: {
-          parent: [ECHO_ACTIVITIES.INTRO],
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      }
-    );
-
-    // Store pre-test answers in session for game referencing
-    sessionStorage.setItem(
-      "onboardingCommunityNoteAnswers",
-      JSON.stringify({
-        language: selectedLanguage,
-        selectedStatementIds: selectedStatements,
-        selectedStatements: selectedDetails.map(({ id, text }) => ({ id, text })),
-        submittedAt: new Date().toISOString(),
-      })
-    );
-
-    // If intro2 video available, show it before completing
-    if (videoAvailability.intro2) {
-      saveCheckpoint(playerData, videoAvailability, "intro2Video");
-      setStep("intro2Video");
-      return;
-    }
-
-    // Otherwise complete onboarding immediately
-    completeOnboarding(playerData);
-  };
-
-  /**
-   * Handles player form submission (name, age, language)
-   * Validates form, initializes xAPI actor, starts game, checks video availability
-   * Advances to intro1Video if available, otherwise jumps to pretest
-   */
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    // Validate name and age inputs
-    if (validateForm()) {
-      // Build player profile object from form inputs
-      const nextPlayerData = {
-        name: playerName.trim(),
-        age: parseInt(playerAge),
-        language: selectedLanguage,
-      };
-
-      // Save player data for use in later steps
-      setPlayerData(nextPlayerData);
-
-      // Switch app language ASAP to show UI in selected language
-      i18n.changeLanguage(selectedLanguage);
-
-      // Initialize xAPI actor (creates player profile for analytics)
-      const initializedActor = initializeActor(nextPlayerData);
-
-      // Send STARTED statement for game - only once per session
-      if (!sessionStorage.getItem("echo:gameStarted")) {
-        sessionStorage.setItem("echo:gameStarted", "1");
-        sendStatement(
-          XAPI_VERBS.STARTED,
-          ECHO_ACTIVITIES.GAME,
-          null,
-          {
-            contextActivities: {
-              parent: [ECHO_ACTIVITIES.INTRO],
-              grouping: [ECHO_ACTIVITIES.GAME],
-            },
-            // Include player age and language in game start tracking
-            extensions: {
-              [XAPI_EXTENSIONS.PLAYER_AGE]: parseInt(nextPlayerData.age, 10),
-              [XAPI_EXTENSIONS.LANG]: nextPlayerData.language,
-            },
-          },
-          initializedActor
-        );
+    submitChallenge(1, answer, (success) => {
+      if (!success) {
+        toast.error(t("playerOnboarding.pretestIncorrect", "Some answers are incorrect. Try again."));
+        return;
       }
 
-      // Check availability of intro1 and intro2 videos in parallel
-      const intro1Path = getVideoPath(1, selectedLanguage);
-      const intro2Path = getVideoPath(2, selectedLanguage);
-      const [hasIntro1, hasIntro2] = await Promise.all([
-        checkVideoExists(intro1Path),
-        checkVideoExists(intro2Path),
-      ]);
+      // Store pre-test answers in session for game referencing
+      sessionStorage.setItem(
+        "onboardingCommunityNoteAnswers",
+        JSON.stringify({
+          language: selectedLanguage,
+          selectedStatementIds: selectedStatements,
+          selectedStatements: selectedDetails,
+          submittedAt: new Date().toISOString(),
+        })
+      );
 
-      // Store availability status for conditional rendering
-      const nextAvailability = { intro1: hasIntro1, intro2: hasIntro2 };
-      setVideoAvailability(nextAvailability);
-      setSelectedStatements([]);
-
-      // Route to first available step: intro1 video -> pretest -> pretest (or exit)
-      if (nextAvailability.intro1) {
-        setStep("intro1Video");
-      } else {
-        // No intro1 video — go directly to pretest, save checkpoint
-        saveCheckpoint(nextPlayerData, nextAvailability);
-        setStep("pretest");
+      if (videoAvailability.intro2) {
+        saveCheckpoint(videoAvailability, "intro2Video");
+        setStep("intro2Video");
+        return;
       }
-    }
+
+      completeOnboarding();
+    });
   };
 
   // Resolve full paths to intro videos
@@ -422,10 +238,10 @@ export const PlayerOnboarding = ({ onComplete }) => {
           skipSequenceRef.current = nextSeq;
           if (nextSeq === "skip") {
             if (isIntro1VideoStep) {
-              saveCheckpoint(playerData, videoAvailability);
+              saveCheckpoint(videoAvailability, "pretest");
               setStep("pretest");
             } else if (isIntro2VideoStep) {
-              completeOnboarding(playerData);
+              completeOnboarding();
             }
           }
         }
@@ -435,14 +251,15 @@ export const PlayerOnboarding = ({ onComplete }) => {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isIntro1VideoStep, isIntro2VideoStep, playerData, videoAvailability]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isIntro1VideoStep, isIntro2VideoStep, videoAvailability]);
 
   // Ensure play button overlay is shown when intro video steps are active (no autoplay)
   useEffect(() => {
     if (isIntro1VideoStep && intro1VideoRef.current) {
       setNeedsTapToPlay(true);
       setIsPaused(false);
-      intro1VideoRef.current.load(); // Force load to trigger onLoadedData and show preview
+      intro1VideoRef.current.load();
     }
   }, [isIntro1VideoStep]);
 
@@ -450,7 +267,7 @@ export const PlayerOnboarding = ({ onComplete }) => {
     if (isIntro2VideoStep && intro2VideoRef.current) {
       setNeedsTapToPlay(true);
       setIsPaused(false);
-      intro2VideoRef.current.load(); // Force load to trigger onLoadedData and show preview
+      intro2VideoRef.current.load();
     }
   }, [isIntro2VideoStep]);
 
@@ -495,6 +312,11 @@ export const PlayerOnboarding = ({ onComplete }) => {
     }
   };
 
+  // Nothing to render while probing videos / deciding the first step
+  if (step === "loading") {
+    return null;
+  }
+
   // Intro 1 video - plays first introduction video, advances to pretest when ends or errors
   if (isIntro1VideoStep) {
     return (
@@ -521,12 +343,12 @@ export const PlayerOnboarding = ({ onComplete }) => {
           onLoadedData={(e) => { e.target.currentTime = 1.0; }}
           onEnded={() => {
             setIsPaused(false);
-            saveCheckpoint(playerData, videoAvailability);
+            saveCheckpoint(videoAvailability, "pretest");
             setStep("pretest");
           }}
           onError={() => {
             setIsPaused(false);
-            saveCheckpoint(playerData, videoAvailability);
+            saveCheckpoint(videoAvailability, "pretest");
             setStep("pretest");
           }}
         />
@@ -582,11 +404,11 @@ export const PlayerOnboarding = ({ onComplete }) => {
           onLoadedData={(e) => { e.target.currentTime = 1.0; }}
           onEnded={() => {
             setIsPaused(false);
-            completeOnboarding(playerData);
+            completeOnboarding();
           }}
           onError={() => {
             setIsPaused(false);
-            completeOnboarding(playerData);
+            completeOnboarding();
           }}
         />
         {(needsTapToPlay || isPaused) && (
@@ -615,123 +437,10 @@ export const PlayerOnboarding = ({ onComplete }) => {
     );
   }
 
-  // Main onboarding form view with conditional rendering
+  // Pre-test quiz view
   return (
     <div className="onboarding-overlay">
-      {/* Container with dynamic width - wider for pretest with many statements */}
-      <div className={`onboarding-container ${step === "pretest" ? "onboarding-container--wide" : ""}`}>
-        {/* Player form step - name, age, language selection */}
-        {step === "playerForm" && (
-          <>
-            {/* Header with app name and subtitle */}
-            <div className="onboarding-header">
-              <h1 className="onboarding-title">{appName}</h1>
-              <p className="onboarding-subtitle">{tx("playerOnboarding.subtitle")}</p>
-            </div>
-
-            {/* Profile form - collects player name, age, language */}
-            <form className="onboarding-form" onSubmit={handleSubmit}>
-              {/* Name input field */}
-              <div className="onboarding-field">
-                <label htmlFor="playerName" className="onboarding-label">
-                  {tx("playerOnboarding.nameLabel")}
-                </label>
-                <input
-                  id="playerName"
-                  type="text"
-                  // Apply error styling if name validation failed
-                  className={`onboarding-input ${errors.name ? "error" : ""}`}
-                  value={playerName}
-                  onChange={(e) => { _cachedName = e.target.value; setPlayerName(e.target.value); }}
-                  placeholder={tx("playerOnboarding.namePlaceholder")}
-                  maxLength={30}
-                  autoComplete="off"
-                />
-                {/* Show validation error message if errors exist */}
-                {errors.name && <span className="onboarding-error">{errors.name}</span>}
-              </div>
-
-              {/* Age input field */}
-              <div className="onboarding-field">
-                <label htmlFor="playerAge" className="onboarding-label">
-                  {tx("playerOnboarding.ageLabel")}
-                </label>
-                <input
-                  id="playerAge"
-                  type="number"
-                  // Apply error styling if age validation failed
-                  className={`onboarding-input ${errors.age ? "error" : ""}`}
-                  value={playerAge}
-                  onChange={(e) => { _cachedAge = e.target.value; setPlayerAge(e.target.value); }}
-                  placeholder={tx("playerOnboarding.agePlaceholder")}
-                  min="1"
-                  max="120"
-                  autoComplete="off"
-                />
-                {/* Show validation error message if errors exist */}
-                {errors.age && <span className="onboarding-error">{errors.age}</span>}
-              </div>
-              {/* Language selection grid - shown only if multiple languages configured */}
-              {i18n.options.supportedLngs && i18n.options.supportedLngs.length > 0 && (
-                <div className="onboarding-field">
-                  <label className="onboarding-label">{tx("playerOnboarding.languageLabel")}</label>
-                  {/* Grid of language options with country flags */}
-                  <div className="language-grid">
-                    {/* Spanish language button with ES flag */}
-                    {i18n.options.supportedLngs.includes("es") && <button
-                      type="button"
-                      // Highlight selected language
-                      className={`language-option ${selectedLanguage === "es" ? "selected" : ""}`}
-                      onClick={() => setSelectedLanguage("es")}
-                    >
-                      <img src="https://flagcdn.com/w80/es.png" alt="ES" className="language-flag" />
-                      <span className="language-name">Español</span>
-                    </button>}
-
-                    {/* English language button with GB flag */}
-                    {i18n.options.supportedLngs.includes("en") && <button
-                      type="button"
-                      // Highlight selected language
-                      className={`language-option ${selectedLanguage === "en" ? "selected" : ""}`}
-                      onClick={() => setSelectedLanguage("en")}
-                    >
-                      <img src="https://flagcdn.com/w80/gb.png" alt="GB" className="language-flag" />
-                      <span className="language-name">English</span>
-                    </button>}
-
-                    {/* Finnish language button with FI flag */}
-                    {i18n.options.supportedLngs.includes("fi") && <button
-                      type="button"
-                      // Highlight selected language
-                      className={`language-option ${selectedLanguage === "fi" ? "selected" : ""}`}
-                      onClick={() => setSelectedLanguage("fi")}
-                    >
-                      <img src="https://flagcdn.com/w80/fi.png" alt="FI" className="language-flag" />
-                      <span className="language-name">Suomi</span>
-                    </button>}
-
-                    {/* Serbian language button with RS flag */}
-                    {i18n.options.supportedLngs.includes("sr") && <button
-                      type="button"
-                      // Highlight selected language
-                      className={`language-option ${selectedLanguage === "sr" ? "selected" : ""}`}
-                      onClick={() => setSelectedLanguage("sr")}
-                    >
-                      <img src="https://flagcdn.com/w80/rs.png" alt="RS" className="language-flag" />
-                      <span className="language-name">Српски</span>
-                    </button>}
-                  </div>
-                </div>)}
-
-              {/* Submit button to proceed to next step */}
-              <button type="submit" className="onboarding-submit">
-                {tx("playerOnboarding.submitButton")}
-              </button>
-            </form>
-          </>
-        )}
-
-        {/* Pre-test quiz step - player selects required number of correct statements */}
+      <div className="onboarding-container onboarding-container--wide">
         {step === "pretest" && (
           <div className="onboarding-step-content">
             {/* Quiz title and instructions */}
@@ -746,17 +455,14 @@ export const PlayerOnboarding = ({ onComplete }) => {
             {/* List of true/false statements to select from */}
             <div className="onboarding-statements-list">
               {statements.map((statement) => {
-                // Check if this statement is currently selected
                 const isSelected = selectedStatements.includes(statement.id);
                 return (
                   <button
                     key={statement.id}
                     type="button"
-                    // Highlight button when selected
                     className={`onboarding-statement ${isSelected ? "selected" : ""}`}
                     onClick={() => handleStatementClick(statement.id)}
                   >
-                    {/* Checkmark appears when statement is selected */}
                     <span className="onboarding-statement-check">{isSelected ? "✓" : ""}</span>
                     <span>{statement.text}</span>
                   </button>
@@ -769,14 +475,12 @@ export const PlayerOnboarding = ({ onComplete }) => {
               type="button"
               className="onboarding-submit"
               onClick={handlePretestSubmit}
-              // Disable until exactly required number of statements are selected
               disabled={selectedStatements.length !== requiredSelections}
             >
               {moderatorFormSubmit}
             </button>
           </div>
         )}
-
       </div>
     </div>
   );

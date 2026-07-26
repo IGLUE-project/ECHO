@@ -10,8 +10,6 @@ import { useTranslation } from "react-i18next";
 import { FaTimes, FaMinus, FaLightbulb, FaChevronLeft, FaPlay } from "react-icons/fa";
 // Import hints data in multiple languages (JSON format)
 import hintsDataRaw from "./HintsData.json";
-// Import xAPI tracking for learning analytics
-import { useXAPI, XAPI_VERBS } from "../../contexts/XAPIProvider";
 // Import utility function to resolve asset paths
 import { assetPath } from "../../utils/assetPath";
 
@@ -23,7 +21,6 @@ import { assetPath } from "../../utils/assetPath";
  * - Dynamic hint display based on active challenge
  * - Multi-language support (English, Spanish)
  * - Intro video playback with language-specific content
- * - xAPI tracking for hint requests (learning analytics)
  * - Context-based hint organization
  * 
  * @returns {JSX.Element} The hints app window or intro video overlay
@@ -124,53 +121,6 @@ export const HintsApp = () => {
    * Minimize the hints app
    */
   const handleMinimize = () => minimizeApp();
-
-  // Get xAPI statement sending function for tracking hint requests
-  const { sendStatement } = useXAPI();
-
-  /**
-   * Track hint request using xAPI for learning analytics
-   * Records which hint was requested, for which puzzle, and which context
-   * 
-   * @param {string} puzzleId - The puzzle ID (1, 2, 3, or 4)
-   * @param {number} hintIdx - Index of the hint in the current hints array
-   * @param {string} hintTitle - The context/title of the hint
-   */
-  const trackHintAsked = async (puzzleId, hintIdx, hintTitle) => {
-    // Send xAPI statement indicating a hint was requested
-    await sendStatement(
-      XAPI_VERBS.ASKED,
-      {
-        // Unique ID for this specific hint
-        id: `https://endgameproject.github.io/xapi/escape-rooms/echo/objects/hint-${puzzleId}-${hintIdx + 1}`,
-        definition: {
-          // Human-readable name of the hint
-          name: { en: `Hint: ${hintTitle}` },
-          // Activity type indicator (tip/hint activity)
-          type: "https://xapi.elearn.rwth-aachen.de/definitions/generic/activities/tip",
-        },
-      },
-      null,
-      {
-        contextActivities: {
-          // Parent activity: the puzzle this hint belongs to
-          parent: [
-            {
-              id: `https://endgameproject.github.io/xapi/escape-rooms/echo/rooms/puzzle-${puzzleId}`,
-              definition: { name: { en: `Puzzle ${puzzleId}` } },
-            },
-          ],
-          // Grouping activity: the overall ECHO game
-          grouping: [
-            {
-              id: "https://endgameproject.github.io/xapi/escape-rooms/echo",
-              definition: { name: { en: "ECHO" } },
-            },
-          ],
-        },
-      }
-    );
-  };
 
   /**
    * Construct the intro video source URL based on current language and video number
@@ -314,8 +264,6 @@ export const HintsApp = () => {
                     <button
                       className="hints-context-btn"
                       onClick={() => {
-                        // Track the hint request for learning analytics
-                        trackHintAsked(currentPuzzleId, idx, hint.context);
                         // Show the selected hint
                         setSelectedContext(idx);
                       }}

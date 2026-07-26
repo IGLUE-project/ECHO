@@ -7,11 +7,7 @@ import { Navbar } from "../../components/Navbar/Navbar";
 import { StatsPanel } from "../../components/StatsPanel/StatsPanel";
 import { useMessages } from "../../contexts/MessagesProvider.jsx";
 import { useStats } from "../../contexts/StatsProvider.jsx";
-import {
-  useXAPI,
-  XAPI_VERBS,
-  ECHO_ACTIVITIES,
-} from "../../contexts/XAPIProvider.jsx";
+import { useEscapp } from "../../contexts/EscappProvider.jsx";
 import aiContent from "./AIContent.json";
 import { assetPath } from "../../utils/assetPath";
 
@@ -52,8 +48,8 @@ export const AIContent = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentLang]);
   const { addMessage } = useMessages();
-  const { challenge2Completed, completeChallenge2, setChallenge2Total, setChallenge2Progress, pauseEscapeTimer, resumeEscapeTimer } = useStats();
-  const { sendStatement, trackChallengeStarted } = useXAPI();
+  const { challenge2Completed, completeChallenge2, setChallenge2Total, setChallenge2Progress } = useStats();
+  const { submitChallenge } = useEscapp();
   const completionSentRef = useRef(false);
   const videoRef = useRef(null);
   const playTimeoutRef = useRef(null);
@@ -109,15 +105,6 @@ export const AIContent = () => {
     }
   }, [step, canAdvanceFromVideo]);
 
-  // Pause escape room timer during video playback, resume afterward
-  useEffect(() => {
-    if (step === "video" && !videoEnded) {
-      pauseEscapeTimer();
-    } else {
-      resumeEscapeTimer();
-    }
-  }, [step, videoEnded, pauseEscapeTimer, resumeEscapeTimer]);
-
   // Update navbar badge: challenge has 1 task (complete the word reconstruction)
   useEffect(() => {
     setChallenge2Total(1);
@@ -141,15 +128,6 @@ export const AIContent = () => {
         clearTimeout(playTimeoutRef.current);
       }
     };
-  }, []);
-
-  // Initialize challenge timer (fallback for direct URL access)
-  useEffect(() => {
-    if (challenge2Completed) return;
-    if (!sessionStorage.getItem("echo:challengeStart:2")) {
-      trackChallengeStarted("2", "Puzzle 2 - AI Content Generated");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Delay showing sentence comparison (showMatch) after completion for visual effect
@@ -244,108 +222,28 @@ export const AIContent = () => {
     window.dispatchEvent(new Event("bossMessage"));
   };
 
-  // Send xAPI succeeded+completed statements once at completion, then show modal
+  // Submit puzzle 3 (Challenge 2) once the sentence is reconstructed, then show the modal.
   useEffect(() => {
     if (!isCompleted || challenge2Completed) return;
 
-    const instructionsSent = sessionStorage.getItem(
-      "challenge3InstructionsSent",
-    );
-    if (instructionsSent) return;
-
-    // Fire-once guard: only send xAPI on first render of completed state
+    // Fire-once guard: only submit on first render of completed state
     if (!completionSentRef.current) {
       completionSentRef.current = true;
     } else {
       return;
     }
 
-    // Dedup: prevent double xAPI send if component re-renders
-    const completedKey2 = "echo:challengeCompleted:2";
-    if (!sessionStorage.getItem(completedKey2)) {
-      sessionStorage.setItem(completedKey2, "1");
+    // This puzzle can only be completed correctly in-app; send a fixed token.
+    submitChallenge(3, "AICONTENT", (success) => {
+      if (success) setShowCompletionModal(true);
+    });
+  }, [isCompleted, challenge2Completed, submitChallenge]);
 
-      const context2 = {
-        contextActivities: {
-          parent: [ECHO_ACTIVITIES.PUZZLE_2],
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      };
-
-      // Send "succeeded" with perfect score (all words correct)
-      sendStatement(
-        XAPI_VERBS.SUCCEEDED,
-        ECHO_ACTIVITIES.PUZZLE_2,
-        {
-          success: true,
-          completion: true,
-          score: {
-            scaled: 1,
-            raw: gameData.words.length,
-            min: 0,
-            max: gameData.words.length,
-          },
-        },
-        context2,
-      );
-
-      // Send "completed" with duration from challenge start
-      const startRaw2 = sessionStorage.getItem("echo:challengeStart:2");
-      const completedResult2 = { completion: true };
-      if (startRaw2 && Number.isFinite(Number(startRaw2))) {
-        const durationMs2 = Date.now() - Number(startRaw2);
-        completedResult2.duration = `PT${Math.max(0, Math.round(durationMs2 / 1000))}S`;
-        completedResult2.extensions = {
-          "https://endgameproject.github.io/xapi/ext/durationMs": durationMs2,
-        };
-      }
-      sessionStorage.removeItem("echo:challengeStart:2");
-      sendStatement(
-        XAPI_VERBS.COMPLETED,
-        ECHO_ACTIVITIES.PUZZLE_2,
-        completedResult2,
-        context2,
-      );
-    }
-
-    setShowCompletionModal(true);
-  }, [isCompleted, challenge2Completed, sendStatement, gameData.words.length]);
-
-  // Handle word selection: validate, send xAPI, and advance or reset
+  // Handle word selection: validate and advance or reset
   const handleWordClick = (word) => {
     if (wrongChoice) return; // Ignore clicks during wrong answer animation
     const currentStep = selectedWords.length;
     const isCorrect = word === gameData.words[currentStep].correct;
-
-    // Send xAPI with correctness and word selected
-    sendStatement(
-      XAPI_VERBS.ANSWERED,
-      {
-        id: `${ECHO_ACTIVITIES.PUZZLE_2.id}/token/${currentStep}`,
-        definition: {
-          name: { en: `Select Token ${currentStep + 1}` },
-          type: "http://adlnet.gov/expapi/activities/cmi.interaction",
-          interactionType: "choice",
-          correctResponsesPattern: [gameData.words[currentStep].correct],
-        },
-      },
-      {
-        success: isCorrect,
-        score: {
-          scaled: isCorrect ? 1 : 0,
-          raw: isCorrect ? 1 : 0,
-          min: 0,
-          max: 1,
-        },
-        response: word,
-      },
-      {
-        contextActivities: {
-          parent: [ECHO_ACTIVITIES.PUZZLE_2],
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      },
-    );
 
     // Correct: add word and move to next step. Wrong: show animation and reset
     if (isCorrect) {

@@ -6,12 +6,9 @@ import { HintsApp } from "../../components/HintsApp/HintsApp";
 import { FilesApp } from "../../components/FilesApp/FilesApp";
 import { PopupNotification } from "../../components/PopupNotification/PopupNotification";
 import { BossNotification } from "../../components/BossNotification/BossNotification";
-import { SurveyModal } from "../../components/SurveyModal/SurveyModal";
 import { useOS } from "../../contexts/OSProvider";
 import { useMessages } from "../../contexts/MessagesProvider";
-import { useStats } from "../../contexts/StatsProvider";
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "../../contexts/XAPIProvider";
-import { FaChevronUp } from "react-icons/fa";
+import { useEscapp } from "../../contexts/EscappProvider";
 import { useTranslation } from "react-i18next";
 import { assetPath } from "../../utils/assetPath";
 
@@ -20,27 +17,18 @@ const FAIL_OUTRO_DELAY_MS = 6000;
 const OUTRO_COMPLETED_KEY = "echo:outroCompleted";
 
 /**
- * Desktop: Main OS simulation desktop screen
- * Manages simulated desktop environment with clock, apps, drawer, notifications, and outro video flow
- * Handles escape room timer, challenge completion, survey, and session restart
+ * Desktop: Main OS simulation desktop screen.
+ * Simulated desktop with clock, apps, drawer and notifications. The escape-room
+ * timer and completion screen are provided by Escapp; this component only keeps
+ * the localized success/fail outro video, triggered by Escapp's final outcome.
  */
 export const Desktop = () => {
   // OS management: track which app is open
   const { activeApp, openApp, minimizeApp } = useOS();
   // Messages: track unread message count for badge
   const { unreadCount } = useMessages();
-  // Game state: challenges, timer, completion status
-  const {
-    challengeFinalCompleted, // Challenge 4 (community note) complete
-    escapeTimerStarted, // Escape room timer active
-    escapeTimerRemainingMs, // Milliseconds remaining
-    escapeTimerFlashTick, // Flash signal for countdown
-    escapeTimerExpired, // Timer ran out
-    finalCompletionStatus, // "success" or "fail"
-    finalCompletionAt, // Timestamp when completed
-  } = useStats();
-  // xAPI tracking: send learning statements to LRS
-  const { sendStatement } = useXAPI();
+  // Escapp final outcome: "success" | "fail" | null (drives the outro video)
+  const { finalOutcome } = useEscapp();
   // Multi-language support
   const { t, i18n } = useTranslation();
   // Check if mission brief read (blocks social app access)
@@ -62,14 +50,6 @@ export const Desktop = () => {
     };
     return localeMap[i18n.language] || undefined;
   }, [i18n.language]);
-  // Drawer configuration (not currently used but kept for future)
-  const drawerConfig = useMemo(
-    () => ({
-      height: 120,
-      handleHeight: 36,
-    }),
-    []
-  );
   // Drawer closed position offset
   const closedTranslate = 90;
   // Drawer state: track open/closed and translate value
@@ -79,16 +59,6 @@ export const Desktop = () => {
   const [now, setNow] = useState(() => new Date());
   // Boss notification visibility
   const [bossNotifVisible, setBossNotifVisible] = useState(false);
-  // Countdown timer flash animation state
-  const [countdownFlash, setCountdownFlash] = useState(false);
-  // Survey modal visibility
-  const [showSurveyModal, setShowSurveyModal] = useState(false);
-  // End options modal (restart/continue/visit resources)
-  const [showEndOptionsModal, setShowEndOptionsModal] = useState(false);
-  // Track if survey already submitted in this session
-  const [surveyCompleted, setSurveyCompleted] = useState(() => {
-    return sessionStorage.getItem('surveyCompleted') === 'true';
-  });
   // Track if outro video already played
   const [outroCompleted, setOutroCompleted] = useState(() => {
     return sessionStorage.getItem(OUTRO_COMPLETED_KEY) === "true";
@@ -104,16 +74,12 @@ export const Desktop = () => {
     const baseLanguage = i18n.resolvedLanguage || i18n.language || "es";
     return ["es", "en", "fi", "sr"].includes(baseLanguage) ? baseLanguage : "es";
   });
-  // Track last flash tick to trigger countdown animation once
-  const lastHandledFlashTickRef = useRef(escapeTimerFlashTick);
   // Timeout for delayed outro video display
   const outroTimeoutRef = useRef(null);
   // Reference to video element for auto-play control
   const outroVideoRef = useRef(null);
   // Timeout for async video playback to prevent seek/play race condition
   const playTimeoutRef = useRef(null);
-  // Countdown is critical (red flashing) when <= 5 minutes remain
-  const isCountdownCritical = escapeTimerRemainingMs <= 5 * 60 * 1000;
   // Handler: dismiss boss notification
   const handleBossNotifDismiss = useCallback(() => setBossNotifVisible(false), []);
   // Normalize i18n language to supported outro video languages
@@ -121,133 +87,33 @@ export const Desktop = () => {
     const baseLanguage = i18n.resolvedLanguage || i18n.language || "es";
     return ["es", "en", "fi", "sr"].includes(baseLanguage) ? baseLanguage : "es";
   }, [i18n.language, i18n.resolvedLanguage]);
-  // Determine outro video src based on completion status (success/fail) and language
+  // Determine outro video src based on Escapp outcome (success/fail) and language
   const outroVideoSrc = useMemo(() => {
-    if (!finalCompletionStatus) return null;
-    const suffix = finalCompletionStatus === "success" ? "success" : "fail";
+    if (!finalOutcome) return null;
+    const suffix = finalOutcome === "success" ? "success" : "fail";
     return assetPath(`/assets/outro_${suffix}_${outroLanguage}.mp4`);
-  }, [finalCompletionStatus, outroLanguage]);
-  // Check if outro video should be played (challenge done, not yet shown)
-  const isOutroPending =
-    challengeFinalCompleted && !outroCompleted && !showOutroVideo && Boolean(finalCompletionStatus);
-  // Check if survey should be available (game complete or timed out, survey not done)
-  const isSurveyAvailable =
-    !surveyCompleted &&
-    !showOutroVideo &&
-    !isOutroPending &&
-    (escapeTimerExpired || (challengeFinalCompleted && outroCompleted && finalCompletionStatus !== "success"));
-  // Track if entire flow (challenge + outro) is complete
-  const isEndingFlowComplete = challengeFinalCompleted && outroCompleted;
+  }, [finalOutcome, outroLanguage]);
 
-  // Timeout for survey banner auto-reopen (30 seconds)
-  const surveyReopenTimerRef = useRef(null);
-  // Track if survey banner dismissed by user
-  const [bannerDismissed, setBannerDismissed] = useState(false);
-
-  // Handler: dismiss survey banner and reshow after 30 seconds
-  const handleDismissBanner = () => {
-    setBannerDismissed(true);
-    surveyReopenTimerRef.current = setTimeout(() => {
-      setBannerDismissed(false);
-    }, 30000);
-  };
-
-  // Handler: open survey modal and clear auto-reopen timer
-  const handleOpenSurvey = () => {
-    if (surveyReopenTimerRef.current) {
-      clearTimeout(surveyReopenTimerRef.current);
-      surveyReopenTimerRef.current = null;
-    }
-    setShowSurveyModal(true);
-  };
-
-  // Handler: close survey modal and reshow after 30 seconds if not completed
-  const handleCloseSurvey = () => {
-    setShowSurveyModal(false);
-    if (!surveyCompleted) {
-      surveyReopenTimerRef.current = setTimeout(() => {
-        setShowSurveyModal(true);
-      }, 30000);
-    }
-  };
-
-  // Handler: close end options modal
-  const handleCloseEndOptionsModal = () => setShowEndOptionsModal(false);
-
-  // Handler: restart game - clear all state and reload page
-  const handleRestartSession = useCallback(async () => {
-    setShowEndOptionsModal(false);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    sessionStorage.clear(); // Clear all game state
-    window.location.reload(); // Reload page
-  }, []);
-
-  // Handler: open ENDGAME project page in new tab
-  const handleVisitEndgame = useCallback(() => {
-    setShowEndOptionsModal(false);
-    window.open("https://endgameproject.github.io/", "_blank", "noopener,noreferrer");
-  }, []);
-
-  // Handler: submit survey answers and send xAPI EVALUATED event
-  const handleSurveySubmit = async (answers) => {
-    console.log('Survey answers:', answers);
-    // Mark survey as completed
-    sessionStorage.setItem('surveyCompleted', 'true');
-    sessionStorage.setItem('gameCompletedAt', String(Date.now()));
-    setSurveyCompleted(true);
-    setShowSurveyModal(false);
-
-    // Send survey results xAPI statement to learning record store
-    await sendStatement(
-      XAPI_VERBS.EVALUATED,
-      ECHO_ACTIVITIES.SURVEY,
-      {
-        response: JSON.stringify(answers),
-        extensions: {
-          "https://endgameproject.github.io/xapi/ext/surveyAnswers": answers,
-        },
-      }
-    );
-    // Show end options modal when survey complete
-    setShowEndOptionsModal(true);
-  };
-
-  // Handler: outro video finished - show survey or end options
-  const handleOutroFinished = useCallback(async () => {
+  // Handler: outro video finished - hand back to Escapp's own completion screen
+  const handleOutroFinished = useCallback(() => {
     if (outroTimeoutRef.current) {
       clearTimeout(outroTimeoutRef.current);
       outroTimeoutRef.current = null;
     }
-    // Mark outro as completed
     sessionStorage.setItem(OUTRO_COMPLETED_KEY, "true");
     setShowOutroVideo(false);
     setOutroCompleted(true);
-    // Show survey if not yet completed, otherwise show end options
-    if (!surveyCompleted) {
-      setShowSurveyModal(true);
-      return;
-    }
-    setShowEndOptionsModal(true);
-  }, [surveyCompleted]);
+  }, []);
 
   // Handler: outro video playback error - fallback to handleOutroFinished
   const handleOutroVideoError = useCallback(() => {
     handleOutroFinished();
   }, [handleOutroFinished]);
 
-  // Helper: clamp drawer translate value between 0 and closedTranslate
-  const clampTranslate = (value) =>
-    Math.min(Math.max(value, 0), closedTranslate);
-
   // Helper: sync drawer open/closed state with translate value
   const syncDrawer = (open) => {
     setDrawerOpen(open);
     setDrawerTranslate(open ? 0 : closedTranslate);
-  };
-
-  // Handler: toggle drawer open/closed
-  const handleToggleDrawer = () => {
-    syncDrawer(!drawerOpen);
   };
 
   // Handler: open messages app
@@ -304,11 +170,9 @@ export const Desktop = () => {
     window.addEventListener("openDrawer", handleOpenDrawer);
     window.addEventListener("bossMessage", handleBossMessage);
     return () => {
-      // Clean up listeners and timers on unmount
       window.removeEventListener("closeDrawer", handleCloseDrawer);
       window.removeEventListener("openDrawer", handleOpenDrawer);
       window.removeEventListener("bossMessage", handleBossMessage);
-      if (surveyReopenTimerRef.current) clearTimeout(surveyReopenTimerRef.current);
     };
   }, []);
 
@@ -318,36 +182,16 @@ export const Desktop = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Effect: trigger countdown timer flash animation when tick changes
+  // Effect: show outro video after a short delay once Escapp reports the outcome
   useEffect(() => {
-    if (!escapeTimerStarted || challengeFinalCompleted || !escapeTimerFlashTick) return;
-    if (escapeTimerFlashTick <= lastHandledFlashTickRef.current) return;
-    // Track this tick to avoid duplicate animation
-    lastHandledFlashTickRef.current = escapeTimerFlashTick;
-    setCountdownFlash(true);
-    // Duration longer for critical (red) state
-    const timeoutId = setTimeout(() => setCountdownFlash(false), isCountdownCritical ? 1700 : 1300);
-    return () => clearTimeout(timeoutId);
-  }, [escapeTimerFlashTick, escapeTimerStarted, challengeFinalCompleted, isCountdownCritical]);
+    if (!finalOutcome || outroCompleted) return;
 
-  // Effect: show outro video after delay when challenge completes
-  useEffect(() => {
-    if (!challengeFinalCompleted || !finalCompletionStatus || outroCompleted) return;
-
-    // Set outro language and hide survey
     setOutroLanguage(normalizedLanguage);
-    setShowSurveyModal(false);
-    // Calculate delay: if already elapsed, show immediately
-    const elapsedSinceCompletion = finalCompletionAt ? Date.now() - finalCompletionAt : 0;
-    const targetDelay = finalCompletionStatus === "success"
-      ? SUCCESS_OUTRO_DELAY_MS
-      : FAIL_OUTRO_DELAY_MS;
-    const remainingDelay = Math.max(0, targetDelay - elapsedSinceCompletion);
+    const targetDelay = finalOutcome === "success" ? SUCCESS_OUTRO_DELAY_MS : FAIL_OUTRO_DELAY_MS;
 
-    // Schedule outro video display
     outroTimeoutRef.current = setTimeout(() => {
       setShowOutroVideo(true);
-    }, remainingDelay);
+    }, targetDelay);
 
     return () => {
       if (outroTimeoutRef.current) {
@@ -355,7 +199,7 @@ export const Desktop = () => {
         outroTimeoutRef.current = null;
       }
     };
-  }, [challengeFinalCompleted, finalCompletionAt, finalCompletionStatus, normalizedLanguage, outroCompleted]);
+  }, [finalOutcome, normalizedLanguage, outroCompleted]);
 
   // Secret sequence listener: type "skip" to skip outro video when playing
   const skipSequenceRef = useRef("");
@@ -387,8 +231,7 @@ export const Desktop = () => {
 
   // Manage body class for video fullscreen to handle stacking context / z-index on mobile
   useEffect(() => {
-    const isVideoActive = showOutroVideo;
-    if (isVideoActive) {
+    if (showOutroVideo) {
       document.body.classList.add("video-fullscreen-active");
     } else {
       document.body.classList.remove("video-fullscreen-active");
@@ -421,14 +264,6 @@ export const Desktop = () => {
     }
   };
 
-  // Memoized: format remaining time as MM:SS string
-  const countdownText = useMemo(() => {
-    const totalSeconds = Math.max(0, Math.ceil(escapeTimerRemainingMs / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }, [escapeTimerRemainingMs]);
-
   // Memoized: format current date for clock display
   const formattedDate = now.toLocaleDateString(locale, {
     weekday: "long",
@@ -444,7 +279,7 @@ export const Desktop = () => {
 
   return (
     <div className="desktop-container">
-      {/* Desktop shell: background with clock and countdown timer */}
+      {/* Desktop shell: background with clock */}
       <div className="desktop-shell">
         <div className="desktop-glow" />
         {/* Digital clock display: shows current date and time */}
@@ -452,15 +287,6 @@ export const Desktop = () => {
           <span className="desktop-clock-time">{formattedTime}</span>
           <span className="desktop-clock-date">{formattedDate}</span>
         </div>
-        {/* Escape room countdown timer: shows only when timer active and not challenge complete */}
-        {escapeTimerStarted && !challengeFinalCompleted && activeApp !== "social" && (
-          <div
-            className={`desktop-countdown ${isCountdownCritical ? "desktop-countdown--critical" : ""} ${countdownFlash ? "desktop-countdown--flash" : ""}`}
-          >
-            <span className="desktop-countdown-label">{t("shared.timeLeft")}</span>
-            <span className="desktop-countdown-value">{countdownText}</span>
-          </div>
-        )}
       </div>
 
       {/* Messages app overlay: click background to minimize */}
@@ -512,20 +338,7 @@ export const Desktop = () => {
       )}
 
       {/* App launcher drawer: shows 4 main app icons at bottom */}
-      <div
-        className={`app-drawer open ${unreadCount > 0 ? "has-unread" : ""}`}
-
-      >
-        {/* Drawer toggle button - currently disabled */}
-        {/* <button
-          className="app-drawer-handle"
-          onClick={handleToggleDrawer}
-          aria-label={drawerOpen ? "Cerrar drawer" : "Abrir drawer"}
-          title={drawerOpen ? "Cerrar" : "Abrir"}
-        >
-          <FaChevronUp className={drawerOpen ? "arrow open" : "arrow"} />
-        </button> */}
-
+      <div className={`app-drawer open ${unreadCount > 0 ? "has-unread" : ""}`}>
         {/* Drawer content: app launcher buttons */}
         <div className="app-drawer-content">
           {/* Messages app launcher: shows unread badge */}
@@ -606,82 +419,7 @@ export const Desktop = () => {
         onDismiss={handleBossNotifDismiss}
       />
 
-      {/* Survey banner: shows when game complete and survey not done (with 30s dismiss timer) */}
-      {isSurveyAvailable && !bannerDismissed && (
-        <div className="survey-banner" onClick={handleOpenSurvey}>
-          <span className="survey-banner-icon">🎉</span>
-          <div className="survey-banner-content">
-            <span className="survey-banner-title">{t('survey.bannerTitle', 'Thanks for playing!')}</span>
-            <span className="survey-banner-subtitle">{t('survey.bannerSubtitle', 'Give us your feedback')}</span>
-          </div>
-          <button className="survey-banner-btn">
-            {t('survey.bannerButton', 'Take Survey')}
-          </button>
-          {/* Close button: dismiss banner for 30 seconds */}
-          <button
-            className="survey-banner-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDismissBanner();
-            }}
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Survey modal overlay */}
-      {showSurveyModal && (
-        <SurveyModal
-          onClose={handleCloseSurvey}
-          onSubmit={handleSurveySubmit}
-        />
-      )}
-
-      {/* End options modal: shows after survey (or outro if failed) */}
-      {showEndOptionsModal && (
-        <div className="end-options-overlay" onClick={handleCloseEndOptionsModal}>
-          <div className="end-options-modal" onClick={(event) => event.stopPropagation()}>
-            <h2 className="end-options-title">
-              {t("escapeRoomEnd.title", "Escape room finished")}
-            </h2>
-            <p className="end-options-description">
-              {t(
-                "escapeRoomEnd.description",
-                "What would you like to do next?",
-              )}
-            </p>
-            <div className="end-options-actions">
-              {/* Restart session button: clear all state and reload */}
-              <button
-                type="button"
-                className="end-options-btn end-options-btn--primary"
-                onClick={handleRestartSession}
-              >
-                {t("escapeRoomEnd.restart", "Return to the beginning")}
-              </button>
-              {/* Continue exploring button: close modal and keep exploring */}
-              <button
-                type="button"
-                className="end-options-btn"
-                onClick={handleCloseEndOptionsModal}
-              >
-                {t("escapeRoomEnd.continueExploring", "Continue exploring ECHO")}
-              </button>
-              {/* Visit ENDGAME resources button: open external link */}
-              <button
-                type="button"
-                className="end-options-btn"
-                onClick={handleVisitEndgame}
-              >
-                {t("escapeRoomEnd.visitResources", "Visit ENDGAME resources")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Outro video overlay: plays success/fail video at game completion */}
+      {/* Outro video overlay: plays success/fail video at escape room completion */}
       {showOutroVideo && outroVideoSrc && (
         <div
           className="outro-video-overlay"

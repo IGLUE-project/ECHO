@@ -5,19 +5,11 @@ import { useNavigate } from "react-router-dom";
 import { useStats } from "../../contexts/StatsProvider.jsx"; // Stats tracking (challenge completion)
 import { usePosts } from "../../contexts/PostsProvider.jsx"; // Create posts (final conclusion)
 import { useLoggedInUser } from "../../contexts/LoggedInUserProvider.jsx"; // Current user data
-import { useXAPI, XAPI_VERBS, ECHO_ACTIVITIES } from "../../contexts/XAPIProvider.jsx"; // xAPI learning events
+import { useEscapp } from "../../contexts/EscappProvider.jsx"; // Escapp puzzle submission
 import { IoMdClose } from "../../utils/icons.jsx"; // Close button icon
 import statementsData from "./CommunityNoteStatements.json"; // Statements to display (multi-language)
 import { assetPath } from "../../utils/assetPath"; // Asset path helper
 import "./CommunityNote.css";
-
-// Helper: convert milliseconds duration to MM:SS format for xAPI records
-const toMinutesSecondsLabel = (durationMs) => {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}min${String(seconds).padStart(2, "0")}seg`;
-};
 
 // Challenge 4 (final): Community Note - select correct statements to conclude the game
 export const CommunityNote = ({ setIsCreateNewPostClicked, className = "modal-content" }) => {
@@ -26,18 +18,10 @@ export const CommunityNote = ({ setIsCreateNewPostClicked, className = "modal-co
   const { completeChallengeFinal } = useStats(); // Mark challenge 4 as complete
   const { createPost } = usePosts(); // Create the final conclusion post
   const { loggedInUserState } = useLoggedInUser(); // Get current user data
-  const { trackChallengeStarted, sendStatement } = useXAPI(); // xAPI event tracking
+  const { submitChallenge } = useEscapp(); // Submit the final puzzle to Escapp
   const navigate = useNavigate(); // Route navigation
   // Track which statements player selected (user selections)
   const [selectedStatements, setSelectedStatements] = useState([]);
-
-  // Initialize challenge timer if not already started (fallback for direct modal open)
-  useEffect(() => {
-    if (!sessionStorage.getItem('echo:challengeStart:4')) {
-      trackChallengeStarted('4', 'Puzzle 4 - Community Note');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Get statements in current language and shuffle them
   const statements = useMemo(
@@ -82,9 +66,10 @@ export const CommunityNote = ({ setIsCreateNewPostClicked, className = "modal-co
     });
   };
 
-  // Submit: validate selections, create conclusion post, send xAPI events
+  // Submit: send the selected statement IDs to Escapp for server-side verification;
+  // on success create the conclusion post (which triggers the outro).
   const handleSubmit = () => {
-    // First validation: user selected required count of statements
+    // Structural check: user selected the required count of statements
     if (selectedStatements.length !== requiredCorrectCount) {
       toast.error(
         t("createPost.incorrectSelection") + ` (${selectedStatements.length}/${requiredCorrectCount})`
@@ -92,138 +77,42 @@ export const CommunityNote = ({ setIsCreateNewPostClicked, className = "modal-co
       return;
     }
 
-    // Second validation: all selected statements are correct
-    const correctSelections = selectedStatements.every((id) => {
-      const statement = statements.find((s) => s.id === id);
-      return statement.correct;
+    // Answer format: selected statement IDs, ascending, ';'-joined. Escapp verifies.
+    const answer = [...selectedStatements].sort((a, b) => a - b).join(";");
+
+    submitChallenge(5, answer, (success) => {
+      if (!success) {
+        // Escapp rejected the answer — keep selections so the user can adjust them.
+        toast.error(t("createPost.incorrectSelection"));
+        return;
+      }
+
+      // Record timestamp for the conclusion post
+      const finalCommunityNoteCreatedAt = new Date().toISOString();
+      // Build conclusion post object with ECHO account details
+      const conclusionPost = {
+        firstName: loggedInUserState?.firstName,
+        lastName: loggedInUserState?.lastName,
+        content: t("createPost.conclusionText"), // Final message from ECHO
+        mediaUrl: "",
+        isCommunityNote: true, // Mark as conclusion post
+        avatarURL: "/assets/echo-logo-bg.png",
+        createdAt: finalCommunityNoteCreatedAt,
+      };
+      // Create the conclusion post in feed
+      createPost(new Event("submit"), conclusionPost, "admin-token");
+      // Update stats: mark challenge 4 as complete
+      completeChallengeFinal();
+
+      // Save conclusion post metadata for highlighting in feed
+      sessionStorage.setItem("echo:highlightFinalCommunityNote", "true");
+      sessionStorage.setItem("echo:highlightFinalCommunityNoteCreatedAt", finalCommunityNoteCreatedAt);
+      sessionStorage.setItem("echo:highlightFinalCommunityNoteContent", t("createPost.conclusionText"));
+      // Close modal if applicable
+      setIsCreateNewPostClicked && setIsCreateNewPostClicked(false);
+      // Navigate to profile to see the new conclusion post
+      navigate(`/profile/${loggedInUserState?.username || "Katherine"}`);
     });
-
-    if (!correctSelections) {
-      // Failed path: incorrect selections made - prepare xAPI FAILED event
-      const selectedStatementsData = selectedStatements.map((id) => {
-        const s = statements.find((st) => st.id === id);
-        return s;
-      });
-      // Count correct vs incorrect selections for xAPI tracking
-      const correctCount = selectedStatementsData.filter((s) => s.correct).length;
-      const incorrectCount = selectedStatementsData.filter((s) => !s.correct).length;
-
-      // Format all statements as response string for xAPI
-      const responseString = statements
-        .map((stmt, index) => `${index + 1}: ${stmt.text}`)
-        .join(' | ');
-
-      // Send xAPI FAILED statement with incorrect selections details
-      sendStatement(
-        XAPI_VERBS.FAILED,
-        ECHO_ACTIVITIES.FINAL,
-        {
-          completion: false,
-          response: responseString,
-          extensions: {
-            // Track which statements were selected and their correctness
-            "https://endgameproject.github.io/xapi/ext/communityNoteSelections": selectedStatementsData.map((s) => ({
-              id: s.id,
-              text: s.text,
-              correct: s.correct,
-            })),
-            // Track counts: correct vs incorrect selections
-            "https://endgameproject.github.io/xapi/ext/communityNoteCorrectCount": correctCount,
-            "https://endgameproject.github.io/xapi/ext/communityNoteIncorrectCount": incorrectCount,
-          },
-        },
-        {
-          contextActivities: {
-            parent: [ECHO_ACTIVITIES.FINAL],
-            grouping: [ECHO_ACTIVITIES.GAME],
-          },
-        }
-      );
-      // Show error but keep selections so user can modify them for retry
-      toast.error(t("createPost.incorrectSelection"));
-      return;
-    }
-    // Success path: all selections correct - proceed with conclusion
-
-    // Record timestamp for the conclusion post
-    const finalCommunityNoteCreatedAt = new Date().toISOString();
-    // Build conclusion post object with ECHO account details
-    const conclusionPost = {
-      firstName: loggedInUserState?.firstName,
-      lastName: loggedInUserState?.lastName,
-      content: t("createPost.conclusionText"), // Final message from ECHO
-      mediaUrl: "",
-      isCommunityNote: true, // Mark as conclusion post
-      avatarURL: "/assets/echo-logo-bg.png",
-      createdAt: finalCommunityNoteCreatedAt,
-    };
-    // Create the conclusion post in feed
-    createPost(new Event("submit"), conclusionPost, "admin-token");
-    // Update stats: mark challenge 4 as complete
-    completeChallengeFinal();
-
-    // Guard dedup: ensure xAPI events sent only once per session
-    const completedKey4 = 'echo:challengeCompleted:4';
-    if (!sessionStorage.getItem(completedKey4)) {
-      sessionStorage.setItem(completedKey4, '1'); // Mark as processed
-
-      // xAPI context: link this event to Challenge 4 and the game
-      const context4 = {
-        contextActivities: {
-          parent: [ECHO_ACTIVITIES.FINAL],
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      };
-      // Send xAPI SUCCEEDED: challenge completed successfully
-      sendStatement(
-        XAPI_VERBS.SUCCEEDED,
-        ECHO_ACTIVITIES.FINAL,
-        { success: true, completion: true },
-        context4
-      );
-
-      // Send xAPI COMPLETED: record challenge 4 duration
-      const startRaw4 = sessionStorage.getItem('echo:challengeStart:4');
-      const completedResult4 = { completion: true };
-      if (startRaw4 && Number.isFinite(Number(startRaw4))) {
-        const durationMs4 = Date.now() - Number(startRaw4);
-        completedResult4.duration = toMinutesSecondsLabel(durationMs4);
-        completedResult4.extensions = { "https://endgameproject.github.io/xapi/ext/durationMs": durationMs4 };
-      }
-      sessionStorage.removeItem('echo:challengeStart:4');
-      sendStatement(XAPI_VERBS.COMPLETED, ECHO_ACTIVITIES.FINAL, completedResult4, context4);
-
-      // Send xAPI COMPLETED for entire ECHO game: total duration from start to finish
-      const escapeTimerStartedAt = sessionStorage.getItem('escapeTimerStartedAt');
-      const gameCompletedResult = { 
-        completion: true,
-        success: true,
-      };
-      // Calculate and record total game duration
-      if (escapeTimerStartedAt && Number.isFinite(Number(escapeTimerStartedAt))) {
-        const totalDurationMs = Date.now() - Number(escapeTimerStartedAt);
-        gameCompletedResult.duration = toMinutesSecondsLabel(totalDurationMs);
-        gameCompletedResult.extensions = { "https://endgameproject.github.io/xapi/ext/durationMs": totalDurationMs };
-      }
-      sendStatement(
-        XAPI_VERBS.COMPLETED,
-        ECHO_ACTIVITIES.GAME,
-        gameCompletedResult,
-        {
-          contextActivities: {
-            grouping: [ECHO_ACTIVITIES.GAME],
-          },
-        }
-      );
-    }
-    // Save conclusion post metadata for highlighting in feed
-    sessionStorage.setItem("echo:highlightFinalCommunityNote", "true");
-    sessionStorage.setItem("echo:highlightFinalCommunityNoteCreatedAt", finalCommunityNoteCreatedAt);
-    sessionStorage.setItem("echo:highlightFinalCommunityNoteContent", t("createPost.conclusionText"));
-    // Close modal if applicable
-    setIsCreateNewPostClicked && setIsCreateNewPostClicked(false);
-    // Navigate to profile to see the new conclusion post
-    navigate(`/profile/${loggedInUserState?.username || "Katherine"}`);
   };
 
   return (

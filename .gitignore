@@ -11,6 +11,10 @@
 # production
 /build
 /dist
+/distZip
+
+# dev-only Escapp config (points the client at a preview escape room)
+/config.mjs
 
 # misc
 .DS_Store

@@ -17,8 +17,6 @@ import { MdAdminPanelSettings } from "react-icons/md";
 import { RiRobotLine, RiErrorWarningLine } from "react-icons/ri";
 // Import new post launcher component
 import { NewPostLauncher } from "../../pages/NewPost/NewPostLauncher.jsx";
-// Import xAPI tracking for learning analytics
-import { useXAPI } from "../../contexts/XAPIProvider.jsx";
 
 /**
  * Navbar Component
@@ -29,7 +27,6 @@ import { useXAPI } from "../../contexts/XAPIProvider.jsx";
  * - Challenge locking system (must complete previous challenges to unlock)
  * - Dynamic popup notifications for blocked/locked challenges
  * - Read instructions requirements before accessing challenges
- * - xAPI tracking for challenge start events
  * - New post launcher integration
  * 
  * @param {boolean} blocked - Whether the navbar is blocked/disabled (default: false)
@@ -47,26 +44,6 @@ export const Navbar = ({ blocked = false }) => {
     challenge2Total, challenge2Progress,
     challenge3Total, challenge3Progress
   } = useStats();
-  // Get xAPI tracking function for challenge start events
-  const { trackChallengeStarted } = useXAPI();
-
-  /**
-   * Track challenge start if not already tracked
-   * Prevents duplicate xAPI statements for the same challenge start
-   * 
-   * @param {string} id - Challenge ID (1, 2, or 3)
-   * @param {string} name - Challenge name for tracking
-   * @param {boolean} completed - Whether challenge is already completed
-   */
-  const startIfNotStarted = (id, name, completed = false) => {
-    // Skip tracking if challenge already completed
-    if (completed) return;
-    // Check if challenge start was already tracked in session
-    if (!sessionStorage.getItem(`echo:challengeStart:${id}`)) {
-      // Track challenge start through xAPI
-      trackChallengeStarted(id, name);
-    }
-  };
 
   // State for controlling popup notification visibility and content
   const [popup, setPopup] = useState({
@@ -177,11 +154,10 @@ export const Navbar = ({ blocked = false }) => {
         <li>
           {!isChallenge1Locked ? (
             // If Challenge 1 is not locked, show accessible NavLink
-            <NavLink 
-              className="navlink" 
-              style={getActiveStyle} 
-              to="/admin" 
-              onClick={() => startIfNotStarted('1', 'Puzzle 1 - Bot Detection', challenge1Completed)}
+            <NavLink
+              className="navlink"
+              style={getActiveStyle}
+              to="/admin"
             >
               <MdAdminPanelSettings className="navlink-icon" />
               <p className="navlink-label">
@@ -212,9 +188,8 @@ export const Navbar = ({ blocked = false }) => {
             // If Challenge 2 instructions are read, show accessible NavLink
             <NavLink 
               className="navlink"
-              style={getActiveStyle} 
+              style={getActiveStyle}
               to="/ai-content"
-              onClick={() => startIfNotStarted('2', 'Puzzle 2 - AI Content Generated', challenge2Completed)}
             >
               <RiRobotLine className="navlink-icon" />
               <p className="navlink-label">
@@ -246,9 +221,8 @@ export const Navbar = ({ blocked = false }) => {
             // If Challenge 3 instructions are read, show accessible NavLink
             <NavLink 
               className="navlink"
-              style={getActiveStyle} 
+              style={getActiveStyle}
               to="/ai-incorrect-uses"
-              onClick={() => startIfNotStarted('3', 'Puzzle 3 - AI Incorrect Uses', challenge3Completed)}
             >
               <RiErrorWarningLine className="navlink-icon" />
               <p className="navlink-label">

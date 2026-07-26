@@ -1,18 +1,13 @@
 import "./Profile.css";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
-// Context providers: posts, XAPI tracking, user data
+// Context providers: posts, user data
 import { usePosts } from "../../contexts/PostsProvider.jsx";
 import { Post } from "../../components/Post/Post";
 import { UserInfo } from "./components/UserInfo/UserInfo";
 import { Navbar } from "../../components/Navbar/Navbar";
-import {
-  useXAPI,
-  XAPI_VERBS,
-  ECHO_ACTIVITIES,
-} from "../../contexts/XAPIProvider.jsx";
 import { useUser } from "../../contexts/UserProvider.jsx";
 import { StatsPanel } from "../../components/StatsPanel/StatsPanel";
 // Utilities: localization helper
@@ -96,10 +91,6 @@ export const Profile = () => {
       ]),
     );
   });
-  // XAPI tracking: send learning statements to LMS
-  const { sendStatement, trackQuizAnswered } = useXAPI();
-  // Tracking: cache to avoid duplicate XAPI lookAt statements
-  const lookedAtSentRef = useRef(new Set());
   // User context: all users data
   const { userState } = useUser();
 
@@ -116,28 +107,6 @@ export const Profile = () => {
       [optionKey]: !prev[optionKey],
     }));
   };
-
-  // XAPI tracking: record when user views a profile (only once per session)
-  useEffect(() => {
-    if (lookedAtSentRef.current.has(username)) return;
-    lookedAtSentRef.current.add(username);
-    sendStatement(
-      XAPI_VERBS.LOOKED_AT,
-      {
-        id: `${ECHO_ACTIVITIES.PROFILE.id}/${username}`,
-        definition: {
-          name: { en: `Account: ${username}` },
-          type: "http://adlnet.gov/expapi/activities/profile",
-        },
-      },
-      null,
-      {
-        contextActivities: {
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      },
-    );
-  }, [username]);
 
   // Filter posts: get all posts for current username
   const postsByUser = allPosts?.filter((post) => post.username === username);
@@ -191,49 +160,12 @@ export const Profile = () => {
     navigate("/admin");
   };
 
-  // Handle user classification: validate and send XAPI statement
+  // Handle user classification: validate and save result
   const handleClassification = (classification) => {
     if (!currentUser) return;
     if (isClassificationLocked) return;
 
     const normalizedClassification = normalizeClassification(classification);
-    const isBot = currentUser?.puzzle?.isBot;
-    const expectedClassification = expectedClassificationFromIsBot(isBot);
-    const isCorrect = normalizedClassification === expectedClassification;
-
-    // Send XAPI statement: record classification attempt
-    sendStatement(
-      XAPI_VERBS.ATTEMPTED,
-      {
-        id: `${ECHO_ACTIVITIES.PUZZLE_1.id}/account/${currentUser?.username}`,
-        definition: {
-          name: { en: `Account Classification: ${currentUser?.username}` },
-          type: "http://adlnet.gov/expapi/activities/cmi.interaction",
-          interactionType: "choice",
-          choices: [
-            { id: "yes", description: { en: "Yes" } },
-            { id: "no", description: { en: "No" } },
-          ],
-          correctResponsesPattern: [expectedClassification],
-        },
-      },
-      {
-        success: isCorrect,
-        score: {
-          scaled: isCorrect ? 1 : 0,
-          raw: isCorrect ? 1 : 0,
-          min: 0,
-          max: 1,
-        },
-        response: normalizedClassification,
-      },
-      {
-        contextActivities: {
-          parent: [ECHO_ACTIVITIES.PUZZLE_1],
-          grouping: [ECHO_ACTIVITIES.GAME],
-        },
-      },
-    );
 
     // Save classification to session
     setClassifiedUsers((prev) => {
@@ -353,16 +285,6 @@ export const Profile = () => {
 
     // Clear error if valid
     setQuizError(null);
-
-    // Valid answer: save and send XAPI
-    const selectedIndicators = selectedQuizOptions.filter(Boolean);
-
-    // Send XAPI: track quiz answer
-    trackQuizAnswered(
-      currentUser.username,
-      selectedIndicators,
-      correctIndicators,
-    );
 
     // Save quiz completion for this user
     setQuizSubmittedByUser((prev) => {

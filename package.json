@@ -30,10 +30,12 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "start": "vite",
     "dev": "vite",
     "build": "vite build",
     "build:gh-pages": "cross-env VITE_BASE_PATH=/ECHO/ vite build",
     "preview": "vite preview",
+    "package": "node tasks/package.mjs",
     "deploy": "npm run build:gh-pages && gh-pages -d dist",
     "test": "...",
     "update-i18n": "node scripts/download_from_excel.mjs",
@@ -59,6 +61,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.2",
+    "adm-zip": "^0.5.16",
     "cross-env": "^10.1.0",
     "dotenv": "^17.3.1",
     "exceljs": "^4.1.1",
