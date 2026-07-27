@@ -35,7 +35,7 @@ export const Admin = () => {
     const { userState } = useUser();
     const { reduceMisinformation, completeChallenge1, challenge1Completed, setSuspectUsersCount, setChallenge1Progress } = useStats();
     const { addMessage } = useMessages();
-    const { submitChallenge } = useEscapp();
+    const { submitChallenge, checkChallenge } = useEscapp();
     const navigate = useNavigate();
     // User classifications: { username: 'yes'|'no' } restored from sessionStorage on reload
     const [classifiedUsers, setClassifiedUsers] = useState(() => {
@@ -184,6 +184,27 @@ export const Admin = () => {
         setChallenge1Progress(correctCount);
     }, [suspectUsers, classifiedUsers, quizSubmittedByUser, setChallenge1Progress]);
 
+    // Track the player's in-progress classification in Escapp via checkPuzzle
+    // (records the attempt without solving the puzzle). 1 = real/human, 0 = fake/bot,
+    // _ = not yet classified. Sends only when the sequence changes.
+    useEffect(() => {
+        if (challenge1Completed || suspectUsers.length === 0) return;
+        const seq = suspectUsers
+            .map((u) => {
+                const c = normalizeClassification(classifiedUsers[u.username]);
+                if (c === CLASSIFICATION.NO) return "1";
+                if (c === CLASSIFICATION.YES) return "0";
+                return "_";
+            })
+            .join("");
+        // Nothing classified yet, or unchanged since last send -> skip.
+        if (!seq.includes("0") && !seq.includes("1")) return;
+        if (sessionStorage.getItem("adminGameLastChecked") === seq) return;
+        sessionStorage.setItem("adminGameLastChecked", seq);
+        checkChallenge(2, seq);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [classifiedUsers, suspectUsers, challenge1Completed]);
+
     // Navigate to user profile with game state marker
     const handleProfileClick = (username) => {
         sessionStorage.setItem('fromAdmin', 'true');
@@ -231,6 +252,7 @@ export const Admin = () => {
             sessionStorage.removeItem('adminGameUsernames');
             sessionStorage.removeItem('adminGameState');
             sessionStorage.removeItem('adminGameQuizState');
+            sessionStorage.removeItem('adminGameLastChecked');
             sessionStorage.removeItem('fromAdmin');
             setClassifiedUsers({});
             setQuizSubmittedByUser({});

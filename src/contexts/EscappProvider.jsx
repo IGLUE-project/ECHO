@@ -210,6 +210,25 @@ export const EscappProvider = ({ children }) => {
     });
   };
 
+  // Send an intermediate/partial answer to Escapp for tracking. Uses the client's
+  // checkPuzzle (POSTs to /check_solution): the attempt is recorded and validated
+  // server-side but the puzzle is NOT marked solved. Useful for logging a player's
+  // in-progress reasoning without finalizing the puzzle.
+  const checkChallenge = (puzzleId, solution, onResult) => {
+    if (!escapp || typeof solution !== "string") {
+      onResult?.(false, null);
+      return;
+    }
+    try {
+      escapp.checkPuzzle(puzzleId, solution, {}, (success, erState) => {
+        onResult?.(success, erState);
+      });
+    } catch (e) {
+      console.warn("Escapp: checkChallenge failed", e);
+      onResult?.(false, null);
+    }
+  };
+
   const value = {
     escapp,
     appSettings,
@@ -219,6 +238,7 @@ export const EscappProvider = ({ children }) => {
     finalOutcome,
     erStartTime,
     submitChallenge,
+    checkChallenge,
   };
 
   // Render nothing until the participant is validated — Escapp shows its own

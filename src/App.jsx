@@ -8,6 +8,7 @@ import { Desktop } from "./pages/Desktop/Desktop";  // Desktop OS interface
 import { ScrollToTop } from "./components/ScrollToTop/ScrollToTop.jsx";  // Reset scroll on route change
 import { Toaster } from "react-hot-toast";  // Notification system
 import { PlayerOnboarding } from "./components/PlayerOnboarding/PlayerOnboarding";  // Intro videos + pretest
+import { FullscreenButton } from "./components/FullscreenButton/FullscreenButton";  // Corner full-screen toggle
 import { useTranslation } from "react-i18next";  // i18n support
 import { useEscapp } from "./contexts/EscappProvider.jsx";  // Escapp progress (solved puzzles)
 
@@ -30,6 +31,9 @@ function App() {
 
   return (
     <div className="App">
+      {/* Persistent full-screen toggle in the corner */}
+      <FullscreenButton />
+
       <div className="phone-rotate-prompt-app">
         <div className="phone-icon-wrapper">
           <div className="phone-body-icon"></div>

@@ -49,7 +49,7 @@ export const AIContent = () => {
   }, [currentLang]);
   const { addMessage } = useMessages();
   const { challenge2Completed, completeChallenge2, setChallenge2Total, setChallenge2Progress } = useStats();
-  const { submitChallenge } = useEscapp();
+  const { submitChallenge, checkChallenge } = useEscapp();
   const completionSentRef = useRef(false);
   const videoRef = useRef(null);
   const playTimeoutRef = useRef(null);
@@ -249,6 +249,11 @@ export const AIContent = () => {
     if (isCorrect) {
       setSelectedWords([...selectedWords, word]);
     } else {
+      // Track the failed attempt in Escapp (records a wrong check without solving):
+      // the words reconstructed so far plus the incorrect word just picked.
+      const wrongAttempt = [...selectedWords, word].join(" ");
+      checkChallenge(3, wrongAttempt);
+
       setWrongChoice({ step: currentStep, word });
       setTimeout(() => {
         setSelectedWords([]); // Reset all selections
