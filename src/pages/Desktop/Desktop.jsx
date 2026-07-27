@@ -221,12 +221,19 @@ export const Desktop = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showOutroVideo, handleOutroFinished]);
 
-  // Ensure play button overlay is shown when outro video is displayed (no autoplay)
+  // Try to autoplay the outro video when it's displayed; fall back to the manual
+  // play button if the browser blocks autoplay.
   useEffect(() => {
     if (!showOutroVideo || !outroVideoRef.current) return;
-    setNeedsTapToPlay(true);
+    const v = outroVideoRef.current;
     setIsPaused(false);
-    outroVideoRef.current.load(); // Force load to trigger onLoadedData and show preview
+    v.load();
+    const playPromise = v.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise.then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+    } else {
+      setNeedsTapToPlay(false);
+    }
   }, [showOutroVideo, outroVideoSrc]);
 
   // Manage body class for video fullscreen to handle stacking context / z-index on mobile
@@ -439,7 +446,7 @@ export const Desktop = () => {
             preload="auto"
             playsInline
             webkit-playsinline="true"
-            onLoadedData={(e) => { e.target.currentTime = 2.0; }}
+            onLoadedData={(e) => { if (e.target.paused) e.target.currentTime = 2.0; }}
             onEnded={handleOutroFinished}
             onError={handleOutroVideoError}
             onContextMenu={(event) => event.preventDefault()}

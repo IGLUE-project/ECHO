@@ -254,21 +254,29 @@ export const PlayerOnboarding = ({ onComplete }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isIntro1VideoStep, isIntro2VideoStep, videoAvailability]);
 
-  // Ensure play button overlay is shown when intro video steps are active (no autoplay)
-  useEffect(() => {
-    if (isIntro1VideoStep && intro1VideoRef.current) {
-      setNeedsTapToPlay(true);
-      setIsPaused(false);
-      intro1VideoRef.current.load();
+  // Attempt to autoplay a video (with sound). Browsers permit this once the user has
+  // interacted with the page; if it's blocked, fall back to the manual play button.
+  const tryAutoplay = (videoEl) => {
+    if (!videoEl) return;
+    setIsPaused(false);
+    videoEl.load();
+    const playPromise = videoEl.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise.then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+    } else {
+      setNeedsTapToPlay(false);
     }
+  };
+
+  // Try to autoplay the intro videos when their step becomes active
+  useEffect(() => {
+    if (isIntro1VideoStep) tryAutoplay(intro1VideoRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isIntro1VideoStep]);
 
   useEffect(() => {
-    if (isIntro2VideoStep && intro2VideoRef.current) {
-      setNeedsTapToPlay(true);
-      setIsPaused(false);
-      intro2VideoRef.current.load();
-    }
+    if (isIntro2VideoStep) tryAutoplay(intro2VideoRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isIntro2VideoStep]);
 
   // Manage body class for video fullscreen to handle stacking context / z-index on mobile
@@ -340,7 +348,7 @@ export const PlayerOnboarding = ({ onComplete }) => {
           playsInline
           controls={false}
           webkit-playsinline="true"
-          onLoadedData={(e) => { e.target.currentTime = 1.0; }}
+          onLoadedData={(e) => { if (e.target.paused) e.target.currentTime = 1.0; }}
           onEnded={() => {
             setIsPaused(false);
             saveCheckpoint(videoAvailability, "pretest");
@@ -401,7 +409,7 @@ export const PlayerOnboarding = ({ onComplete }) => {
           playsInline
           controls={false}
           webkit-playsinline="true"
-          onLoadedData={(e) => { e.target.currentTime = 1.0; }}
+          onLoadedData={(e) => { if (e.target.paused) e.target.currentTime = 1.0; }}
           onEnded={() => {
             setIsPaused(false);
             completeOnboarding();

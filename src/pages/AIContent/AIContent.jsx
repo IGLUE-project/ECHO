@@ -168,12 +168,19 @@ export const AIContent = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [step]);
 
-  // Ensure play button overlay is shown when video step is active (no autoplay)
+  // Try to autoplay the educational video when its step becomes active; fall back to
+  // the manual play button if the browser blocks autoplay.
   useEffect(() => {
     if (step === "video" && !videoEnded && videoRef.current) {
-      setNeedsTapToPlay(true);
+      const v = videoRef.current;
       setIsPaused(false);
-      videoRef.current.load(); // Force load to trigger onLoadedData and show preview
+      v.load();
+      const playPromise = v.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise.then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+      } else {
+        setNeedsTapToPlay(false);
+      }
     }
   }, [step, videoEnded]);
 
@@ -436,7 +443,7 @@ export const AIContent = () => {
                             setIsPaused(false);
                           }}
                           onPlay={() => setVideoEnded(false)}
-                          onLoadedData={(e) => { e.target.currentTime = 1.0; }}
+                          onLoadedData={(e) => { if (e.target.paused) e.target.currentTime = 1.0; }}
                           onError={() => setHasLocalizedVideo(false)}
                           src={localizedVideoSrc}
                           style={{ borderRadius: (!needsTapToPlay && !videoEnded) ? 0 : 12, background: "#000" }}

@@ -3,6 +3,12 @@ import { FaExpand, FaCompress } from "react-icons/fa";
 import { useTranslation } from "react-i18next";
 import "./FullscreenButton.css";
 
+// Whether fullscreen is permitted in this document. Returns false when the app is
+// embedded in an iframe without allow="fullscreen" (browser Permissions Policy), so
+// we hide the button instead of triggering a policy-violation warning on a dead click.
+const isFullscreenAllowed = () =>
+  Boolean(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+
 // Cross-browser helpers (Safari/older browsers use webkit-prefixed APIs).
 const getFullscreenElement = () =>
   document.fullscreenElement || document.webkitFullscreenElement || null;
@@ -45,6 +51,12 @@ export const FullscreenButton = () => {
       /* fullscreen may be blocked (e.g. embedded without allowfullscreen) */
     }
   };
+
+  // Don't render where fullscreen is blocked (e.g. embedded in an iframe without
+  // allow="fullscreen") — clicking would only log a Permissions Policy violation.
+  if (!isFullscreenAllowed()) {
+    return null;
+  }
 
   const label = isFullscreen
     ? t("fullscreen.exit", "Exit full screen")
