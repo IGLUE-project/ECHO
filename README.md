@@ -298,6 +298,14 @@ For other static hosts, check `VITE_BASE_PATH` and the equivalent SPA rule. `pub
 - `node_modules/` and `dist/` are local artifacts.
 - `App.test.jsx` is a legacy test and does not reflect the current app.
 
+## Funding
+
+This software has been developed within the scope of the [ENDGAME](https://endgameproject.github.io) and [IGLUE](https://iglue.dit.upm.es) projects.
+
+ENDGAME has been co-funded by the European Union under the Creative Europe Programme (Project reference [101185763](https://endgameproject.github.io)).
+
+IGLUE has been co-funded by the European Union under the Erasmus+ Programme (Project reference [2024-1-ES01-KA220-HED-000256356](https://iglue.dit.upm.es)).
+
 ## License
 
-Project developed within the ENDGAME project framework. Academic and research use.
+Academic and research use.
