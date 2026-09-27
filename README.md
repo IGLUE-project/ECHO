@@ -1,21 +1,36 @@
 # ECHO - Social Media Escape Room
 
-ECHO is an educational web application of the escape room type. It simulates a desktop with several internal apps and a social network where the player acts as a content moderator to solve challenges about digital misinformation and artificial intelligence.
+ECHO is an educational web application of the escape room type, designed to be served and embedded by [Escapp](https://github.com/iglue-project/escapp), an open-source web platform for creating and conducting educational escape rooms. It simulates a desktop with several internal apps and a social network where the player acts as a content moderator to solve challenges about digital misinformation and artificial intelligence.
 
-The project is built with React + Vite, uses MirageJS as a simulated in-memory backend, and i18next for internationalization.
+The project is built with React + Vite, uses MirageJS as a simulated in-memory backend for the social network, and i18next for internationalization. Player identity, the escape timer, and puzzle verification are handled by Escapp.
+
+## Escapp Integration
+
+ECHO runs as an Escapp escape room. Escapp owns identity, the countdown timer, and the server-side state of the escape room; the app declares which puzzles it is linked to and submits the player's answers for verification.
+
+- **Client bootstrap.** `EscappProvider` instantiates the Escapp client on mount using `ESCAPP_CLIENT_SETTINGS` (linked puzzle IDs `1..5`). The app renders nothing until `client.validate()` confirms the participant.
+- **Puzzle submission.** Answers are sent to Escapp, which grades them against the solutions configured in the authoring UI:
+  - `submitChallenge(puzzleId, solution)` submits a final answer via `escapp.submitPuzzle()`.
+  - `checkChallenge(puzzleId, solution)` records intermediate/partial attempts via `escapp.checkPuzzle()` without solving the puzzle.
+- **Progress restore.** The number of solved puzzles (`client.getSolvedPuzzles()`) is used to restore game state on reload, and `client.getAllPuzzlesSolved()` determines the success/fail outro.
+- **Callbacks.** The app reacts to timer changes (including running out of time) and to escape-room restarts, clearing local state and reloading when Escapp restarts the room.
+- **Settings injection.** In production the Escapp server injects `window.ESCAPP_APP_SETTINGS` (locale + escape room endpoint) into the page. For local development, a Vite plugin injects the same object from a git-ignored `config.mjs`.
+
+> Note: there is **no xAPI / LRS** integration in this app. All learning and progress data is recorded server-side by Escapp.
 
 ## Game Flow
 
-1. The player completes onboarding with name, age, and language.
-2. The app plays introductory videos available for the selected language.
-3. The player answers a pretest based on the phrases from the final challenge.
-4. A 20-minute escape timer starts.
-5. The player reads messages from the security team and unlocks the ECHO social network.
-6. Within ECHO, logs in with moderator credentials.
-7. Completes the challenges in order and publishes the final Community Note.
-8. When the final challenge is submitted, a localized success or failure outro video is played and the final survey is shown. If the timer expires before completion, the survey is made available without an outro.
+Identity and language come from Escapp; there is no in-app name/age/language form.
 
-Social app credentials:
+1. Escapp validates the participant and provides the locale and escape room endpoint.
+2. The app plays the first introductory video (if available for the language).
+3. The player answers a pretest (Escapp puzzle 1) based on the phrases from the final challenge; answers are verified by Escapp.
+4. The second introductory video plays.
+5. The escape timer (managed by Escapp) is running; the player reads messages from the security team and unlocks the ECHO social network.
+6. Within ECHO, the player logs in with moderator credentials and completes the challenges in order.
+7. When the final challenge (Community Note) is submitted and all puzzles are solved, a localized success or failure outro video is played based on Escapp's final outcome. If the timer expires first, the fail outro is shown.
+
+Social app credentials (for the simulated social network login only — unrelated to Escapp authentication):
 
 ```text
 Username: echo
@@ -24,13 +39,17 @@ Password: MintAI_mod
 
 ## Challenges
 
-| # | Challenge | Implementation |
-|---|-----------|----------------|
-| 1 | Suspicious Accounts | Classify 5 randomly selected accounts: 3 bots and 2 humans. Bots additionally require identifying mandatory indicators in a quiz. |
-| 2 | AI-Generated Content | Review a case, watch an educational video, and reconstruct an AI-generated phrase word by word. |
-| 3 | Incorrect Uses of AI | Review 3 random cases of problematic AI use and choose the correct community response. |
-| 4 | Community Note | Select the correct statements and publish the final note from the new post button. |
+The escape room has 5 Escapp puzzles. Each puzzle's answer is verified server-side by Escapp against the solution configured in the authoring UI (see `src/constants/escapp.js`).
 
+| Puzzle | Challenge | Implementation | Solution format |
+|--------|-----------|----------------|-----------------|
+| 1 | Pretest (onboarding) | Select the correct statements from the final challenge. | Correct statement IDs, ascending, `;`-joined (e.g. `1;3;6;8;9`). |
+| 2 | Suspicious Accounts | Classify 5 randomly selected accounts (3 bots, 2 humans); bots additionally require identifying mandatory indicators in a quiz. | One digit per account in on-screen order, `1` = human, `0` = bot (e.g. `10010`). |
+| 3 | AI-Generated Content | Review a case, watch an educational video, and reconstruct an AI-generated phrase word by word. | Fixed token (`AICONTENT`); the puzzle can only be completed correctly in-app. |
+| 4 | Incorrect Uses of AI | Review 3 random cases of problematic AI use and choose the correct community response. | Chosen option index per case, `;`-joined (e.g. `0;0;0`). |
+| 5 | Community Note (final) | Select the correct statements and publish the final note from the new post button. | Correct statement IDs, ascending, `;`-joined (e.g. `1;3;6;8;9`). |
+
+Intermediate attempts (e.g. wrong account classifications) are reported to Escapp via `checkPuzzle` without solving the puzzle.
 
 ## Simulated Desktop
 
@@ -50,31 +69,38 @@ The main screen is a desktop with an app drawer:
 | Frontend | React 18.3.1 + Vite 7 |
 | Routing | React Router 6 |
 | State | Context API + targeted reducers |
-| Simulated Backend | MirageJS |
+| Escape room platform | Escapp client (identity, timer, puzzle verification) |
+| Simulated social backend | MirageJS (posts, users, comments) |
 | HTTP | Axios |
 | i18n | i18next, react-i18next, i18next-browser-languagedetector |
 | Auxiliary UI | react-hot-toast, react-awesome-reveal, react-icons |
 | Dates | Day.js + custom helpers |
 | Data/Scripts | ExcelJS, dotenv |
 
+MirageJS only simulates the ECHO social network. Calls under `/api/escapeRooms/...` are passed through to the real Escapp server so the Escapp client can reach it.
+
 ## Requirements
 
 - Node.js 20.19 or higher, or Node.js 22.12 or higher.
 - npm 9 or higher.
+- An Escapp escape room with 5 puzzles configured with the solutions in `src/constants/escapp.js`.
 
 ## Installation
 
 ```bash
-git clone https://github.com/ENDGAMEPROJECT/ECHO
+git clone https://github.com/IGLUE-project/ECHO
 cd ECHO
 npm install
 ```
 
-For local development:
+For local development against an Escapp escape room:
 
 ```bash
+cp config.example.mjs config.mjs   # edit endpoint + locale
 npm run dev
 ```
+
+`config.mjs` is git-ignored and used only in development to inject `window.ESCAPP_APP_SETTINGS` (locale and escape room endpoint), replicating what the Escapp server does in production. Set `endpoint` to your escape room's API URL and `preview: true` to test as the author without a full participant team.
 
 ## Environment Variables
 
@@ -85,13 +111,13 @@ VITE_JWT_SECRET="any"
 XLSX_URL="https://docs.google.com/spreadsheets/d/..."
 ```
 
-Relevant variables:
-
 | Variable | Usage |
 |----------|-------|
 | `XLSX_URL` | Required for `npm run update-i18n`. It is the URL of the master Excel file. |
-| `VITE_BASE_PATH` | Vite base path. The `build:gh-pages` script sets it to `/ECHO/`. |
+| `VITE_BASE_PATH` | Vite base path. Defaults to `./` so the app works when embedded by Escapp; the `build:gh-pages` script sets it to `/ECHO/`. |
 | `VITE_JWT_SECRET` | Preserved in `example.env`; the current app does not use real JWT authentication. |
+
+Escapp runtime settings (locale and escape room endpoint) are **not** in `.env` — they are injected via `window.ESCAPP_APP_SETTINGS` (by Escapp in production, or by `config.mjs` in development).
 
 ## Commands
 
@@ -125,8 +151,8 @@ npm run update-i18n-inverse
 ```text
 src/
   main.jsx                         # React mounting, Router, MirageJS and providers
-  App.jsx                          # Onboarding, session recovery and desktop
-  server.jsx                       # MirageJS server and /api routes
+  App.jsx                          # Onboarding gate and desktop (renders after Escapp validation)
+  server.jsx                       # MirageJS server, /api routes and Escapp passthrough
   i18n.jsx                         # i18next configuration
   backend/
     controllers/                   # Mirage handlers for posts, users and comments
@@ -140,20 +166,21 @@ src/
     HintsApp/                      # Hints per challenge and intro videos
     MessagesApp/                   # Instruction messages
     Navbar/                        # ECHO navigation and challenge locks
-    PlayerOnboarding/              # Initial form, videos and pretest
+    PlayerOnboarding/              # Intro videos and pretest (Escapp puzzle 1)
     Post/                          # Post card and comments
     SocialMediaApp/                # Window/login/container of ECHO routes
     StatsPanel/                    # Progress panel, threat level and timer
-    SurveyModal/                   # Final survey
     Taskbar/                       # Taskbar available for the simulation
-  constants/langs/                 # Translations es, en, fi, sr
-  contexts/                        # Global state for users, posts, messages, OS and stats
+  constants/
+    escapp.js                      # Escapp client settings and puzzle solutions
+    langs/                         # Translations es, en, fi, sr
+  contexts/                        # EscappProvider + global state (users, posts, messages, OS, stats)
   pages/
     Admin/                         # Challenge 1
     AIContent/                     # Challenge 2
     AIIncorrectUses/               # Challenge 3
     CommunityNote/                 # Challenge 4 as modal
-    Desktop/                       # Main desktop
+    Desktop/                       # Main desktop and outro video
     Home/                          # Main feed
     NewPost/                       # Post or Community Note launcher
     PostDetail/                    # Post detail route
@@ -164,6 +191,7 @@ src/
 scripts/
   download_from_excel.mjs          # Excel -> i18n, data, challenges, feed, hints and assets
   js_to_csv.mjs                    # i18n JS -> tmp/i18n_csv/i18n_strings.csv
+config.example.mjs                 # Template for dev-only Escapp settings (copy to config.mjs)
 public/
   assets/                          # Logos, videos, user/post/feed images
   404.html                         # SPA redirect for GitHub Pages
@@ -188,7 +216,7 @@ Navigation also applies visual locks from `Navbar`: completing a challenge is no
 
 ## Simulated Backend
 
-MirageJS intercepts calls under `/api` and loads data by language. When changing language, `PostsProvider` reinitializes the server and reloads posts.
+MirageJS intercepts calls under `/api` and loads data by language for the ECHO social network. When changing language, `PostsProvider` reinitializes the server and reloads posts. Escapp API calls (`/api/escapeRooms/...`) are passed through to the real Escapp server.
 
 ### Posts
 
@@ -239,7 +267,7 @@ Supported languages:
 | `fi` | Finnish |
 | `sr` | Serbian |
 
-The language is selected during onboarding. i18next can also detect it from `?lang=`, `localStorage` (`i18nextLng`), or the browser.
+The language is normally provided by Escapp (`ESCAPP_APP_SETTINGS.locale`) and applied to i18next before rendering. i18next can also detect it from `?lang=`/`?locale=`, `localStorage` (`i18nextLng`), or the browser, falling back to Spanish.
 
 UI texts are in:
 
@@ -270,6 +298,7 @@ The app uses Context API to coordinate global state:
 
 | Provider | Responsibility |
 |----------|-----------------|
+| `EscappProvider` | Escapp client, participant validation, puzzle submission and progress. |
 | `UserProvider` | List of users loaded from Mirage. |
 | `LoggedInUserProvider` | Official ECHO moderator user. |
 | `PostsProvider` | Posts, likes, comments and reload by language. |
@@ -277,9 +306,11 @@ The app uses Context API to coordinate global state:
 | `OSProvider` | Open apps, active app, minimize/close. |
 | `MessagesProvider` | Messages, read/unread and unlockable instructions. |
 
-Game progress is saved mainly in `sessionStorage`. There is support for session resumption and for resuming onboarding from a checkpoint if the page reloads during the pretest or the second video.
+Local game progress is saved in `sessionStorage`; authoritative progress (solved puzzles, timer, final outcome) lives in Escapp and is restored on reload. There is also support for resuming onboarding from a checkpoint if the page reloads during the pretest or the second video.
 
 ## Deployment
+
+In production ECHO is served/embedded by the Escapp platform, which injects the escape room settings. It can also be built as a standalone static bundle.
 
 For GitHub Pages:
 
@@ -294,6 +325,7 @@ For other static hosts, check `VITE_BASE_PATH` and the equivalent SPA rule. `pub
 
 ## Maintenance Notes
 
+- `config.mjs` is a dev-only, git-ignored file for local Escapp settings (see `config.example.mjs`).
 - `tmp/` is used for backups generated by Excel scripts and for the exported CSV.
 - `node_modules/` and `dist/` are local artifacts.
 - `App.test.jsx` is a legacy test and does not reflect the current app.
