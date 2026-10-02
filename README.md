@@ -336,7 +336,9 @@ This software has been developed within the scope of the [ENDGAME](https://endga
 
 ENDGAME has been co-funded by the European Union under the Creative Europe Programme (Project reference [101185763](https://endgameproject.github.io)).
 
-IGLUE has been co-funded by the European Union under the Erasmus+ Programme (Project reference [2024-1-ES01-KA220-HED-000256356](https://iglue.dit.upm.es)).
+IGLUE has been co-funded by the European Union under the Erasmus+ Programme (Project reference [2024-1-ES01-KA220-HED-000256356](https://iglue.dit.upm.es)).  
+
+<img src="https://github.com/user-attachments/assets/9760cf7f-a06b-4509-8281-4174c235fc43" width="300">
 
 ## License
 
